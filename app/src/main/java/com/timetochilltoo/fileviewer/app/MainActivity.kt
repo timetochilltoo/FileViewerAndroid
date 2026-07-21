@@ -25,13 +25,22 @@ class MainActivity : ComponentActivity() {
             }
         }
         if (savedInstanceState == null) {
+            if (IntentRouter.route(intent) != Ingress.None) {
+                viewModel.skipSessionRestore()
+            }
             handleIntent(intent)
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        viewModel.skipSessionRestore()
         handleIntent(intent)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        viewModel.persistState()
     }
 
     private fun handleIntent(intent: Intent?) {

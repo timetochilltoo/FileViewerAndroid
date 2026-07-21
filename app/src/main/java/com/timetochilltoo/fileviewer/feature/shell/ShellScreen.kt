@@ -67,6 +67,7 @@ fun ShellScreen(viewModel: AppViewModel) {
     val closeRequestTabId by viewModel.closeRequestTabId.collectAsState()
     val statusMessage by viewModel.statusMessage.collectAsState()
     val recents by viewModel.recents.collectAsState()
+    val markdownMode by viewModel.markdownMode.collectAsState()
 
     val tabs = uiState.tabs
     val selectedTabId = uiState.selectedTabId
@@ -186,7 +187,10 @@ fun ShellScreen(viewModel: AppViewModel) {
 
                 selectedTab?.document is ViewerDocument.Markdown -> MarkdownWorkspace(
                     tab = selectedTab,
+                    mode = markdownMode,
+                    onModeChange = viewModel::setMarkdownMode,
                     onTextChange = { viewModel.updateMarkdownText(selectedTab.id, it) },
+                    onPreviewScroll = { viewModel.updateMarkdownScroll(selectedTab.id, it) },
                 )
 
                 selectedTab?.document is ViewerDocument.Pdf -> PdfWorkspace(tab = selectedTab)

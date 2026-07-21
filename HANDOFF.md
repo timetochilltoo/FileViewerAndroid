@@ -1,6 +1,6 @@
 # FileViewer Android — Handoff
 
-Last updated: 2026-07-21 (Phase 1 complete)
+Last updated: 2026-07-22 (Phase 2 complete)
 Active repo (local): `/Users/patrickshi/KimiCoding/FileViewer`
 GitHub remote: `https://github.com/timetochilltoo/FileViewerAndroid.git`
 Git identity (already in Patrick's global git config): user `timetochilltoo`, email `152804118+timetochilltoo@users.noreply.github.com`
@@ -106,6 +106,7 @@ app/src/main/java/com/timetochilltoo/fileviewer/
 ├── core/
 │   ├── model/
 │   │   ├── DocumentKind.kt      # MARKDOWN | PDF
+│   │   ├── MarkdownMode.kt      # PREVIEW | SOURCE | SPLIT
 │   │   ├── ViewerDocument.kt    # sealed: Markdown(uri?, text, savedText) | Pdf(uri, pageCount, handle)
 │   │   ├── DocumentTab.kt       # immutable per-tab state; hasUnsavedChanges computed (md: text != savedText)
 │   │   └── TabManager.kt        # PURE tab-list logic (add/select/update/remove/findByUri) — no Android deps, unit-tested
@@ -113,15 +114,22 @@ app/src/main/java/com/timetochilltoo/fileviewer/
 │       ├── DocumentRepository.kt # SAF: load(uri)->ViewerDocument, displayName, kindFor (ext-based), writeMarkdown
 │       ├── PdfHandle.kt         # PdfiumCore + ParcelFileDescriptor + PdfDocument; close() on tab close
 │       ├── RecentsStore.kt      # DataStore JSON list, dedupe by uri, cap 20
+│       ├── SessionStore.kt      # DataStore session tabs/selection + per-file scroll map; SessionCodec pure/tested
 │       ├── RecentDocument.kt
 │       └── IntentRouter.kt      # Intent -> Ingress (OpenUris | SharedText | None), Robolectric-tested
 └── feature/
     ├── shell/
     │   ├── AppViewModel.kt      # AndroidViewModel; ONE ShellUiState flow (tabs+selectedTabId) — see lesson 7.1
-    │   │                        # close-request flow, save/save-as, recents, status message
+    │   │                        # close-request, save/save-as, recents, markdownMode, session save/restore,
+    │   │                        # scroll positions, persistState() (called from MainActivity.onPause)
     │   └── ShellScreen.kt       # TopAppBar+overflow menu, custom TabStrip (see lesson 7.1), StatusStrip,
     │                            # EmptyState w/ recents, UnsavedCloseDialog, back-press chain
-    ├── markdown/MarkdownWorkspace.kt   # minimal BasicTextField editor (Phase 2 replaces with preview/split)
+    ├── markdown/
+    │   ├── MarkdownWorkspace.kt      # mode selector + SOURCE/PREVIEW/SPLIT layout (Split only ≥840dp); key(tab.id)
+    │   ├── MarkdownSourceEditor.kt   # BasicTextField(TextFieldValue), monospace, no autocorrect;
+    │   │                             # external text changes sync with clamped cursor (Phase 3 formatting path)
+    │   └── MarkdownPreview.kt        # Markwon (tables/tasklist/strikethrough) in ScrollView AndroidView;
+    │                             # 150ms debounce, scroll reporting + initial scroll restore
     └── pdf/PdfWorkspace.kt             # placeholder: name + page count (Phase 4 builds the viewer)
 app/src/androidTest/
 ├── assets/fixture_hello.pdf     # generated 1-page PDF
@@ -162,21 +170,32 @@ Scoped storage (API 30+) blocks raw-path reads via `file://` even with correct p
   ```
   Works because an app can always read its own internal files dir via raw path.
 
+### 7.3 Phase 2 lessons
+
+- Markwon plugin class is `TablePlugin` (not `TablesPlugin`), and its factory needs a `Context`: `TablePlugin.create(context)`.
+- Session restore is a suspend `restoreSession()` in `AppViewModel.init`; `skipSessionRestore()` is set synchronously from `MainActivity` before the coroutine runs (external-intent suppression, mirrors macOS `suppressSessionRestore`).
+- `persistState()` (session + scroll) runs from `MainActivity.onPause`; `am force-stop` does NOT fire it — smoke tests must background the app first (HOME key) then force-stop.
+- Only **preview** scroll is tracked/restored; `BasicTextField` internal scroll isn't exposed. Editor scroll restore is a known limitation (consider a custom scroll connection if Patrick wants it).
+- Untitled tabs are never written to the session (by design).
+- Untitled-save bug (0-byte file from overflow menu): fixed by `PendingSaveAs(tabId, closeAfter)` covering both menu-Save and close-dialog Save paths through the one CreateDocument result callback.
+
 ## 8. Status & what's next
 
 **Done:**
 - **Phase 0** — skeleton, build green, spike passed, emulator created.
-- **Phase 1** — document model (`TabManager`, `ViewerDocument`, `DocumentTab`), tabs UI (custom strip, dirty dot, close), SAF open (multi-select), share/VIEW ingress, unsaved-close dialog (Save / Don't Save / Cancel incl. untitled→Save As flow), save/save-as via SAF, recents (DataStore + empty-state list), status strip, back-press close chain. 14 unit tests + 3 instrumented spike tests green; on-device smoke test (open PDF + MD via intents → 2 tabs) verified with screenshots.
+- **Phase 1** — document model, tabs UI, SAF open, share/VIEW ingress, unsaved-close dialog, save/save-as, recents, status strip, back-press close chain. Smoke-verified on emulator.
+- **Save-flow fix** — 0-byte file when saving untitled doc from overflow menu (`PendingSaveAs`), plus Save As menu item (`c6086d4`).
+- **Phase 2** — Markwon preview (tables/tasklist/strikethrough, 150ms debounce), TextFieldValue source editor (no autocorrect), Preview/Source/Split modes (Split ≥840dp), session restore with external-intent suppression, per-file preview-scroll restore. 7 SessionCodec tests added (21 unit tests total). Smoke-verified: source edit, preview render, force-stop→relaunch restores both tabs with selection.
 
-**Next: Phase 2 — Markdown MVP (~1.5 wks)** per plan §5:
+**Next: Phase 3 — Markdown formatting + search + guide (~1.5 wks)** per plan §5:
 
-1. Markwon setup (core + tables + tasklist + strikethrough already in deps) in an `AndroidView`.
-2. Proper source editor: replace minimal `BasicTextField` with `TextFieldValue`-based editor exposing selection to the ViewModel (Phase 3 formatting needs it); monospaced, no autocorrect.
-3. Mode segmented control (Preview / Source; Split only ≥ 840dp).
-4. Debounced (~150ms) preview refresh.
-5. Session snapshot to DataStore + restore on launch; suppress when launched from external intent (DM-9); per-file Markdown scroll restore (DM-10).
+1. `MarkdownFormatter` pure-Kotlin port of the macOS toggle logic (bold/italic/underline-HTML/heading/bullet/numbered/quote/link/code/table/task-list), UTF-16 index math — this is the biggest unit-test surface of the phase.
+2. Formatting toolbar: Format dropdown + icon buttons; underline labeled "HTML underline"; placeholder insertion with no selection. Needs the editor's selection — `MarkdownSourceEditor` must expose `TextFieldValue.selection` up to the ViewModel (add per-tab selection state or an editor-state holder).
+3. Search: literal find over source → preview span highlight (yellow/orange), counter, prev/next, `IME_ACTION_SEARCH`.
+4. Navigate panel: Markdown heading list (drawer).
+5. Markdown Syntax Guide screen.
 
-Then Phase 3 (formatting/search/guide), Phase 4 (PDF core incl. text reflow), Phase 7 (polish). Phases 5–6 (annotations) optional — spike green-lit.
+Then Phase 4 (PDF core incl. text reflow), Phase 7 (polish). Phases 5–6 (annotations) optional — spike green-lit.
 
 ## 9. Working agreements
 
