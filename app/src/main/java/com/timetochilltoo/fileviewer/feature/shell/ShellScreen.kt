@@ -72,15 +72,16 @@ fun ShellScreen(viewModel: AppViewModel) {
     val selectedTabId = uiState.selectedTabId
     val selectedTab = tabs.firstOrNull { it.id == selectedTabId }
 
-    var pendingSaveThenCloseTabId by remember { mutableStateOf<String?>(null) }
+    var pendingSaveAs by remember { mutableStateOf<PendingSaveAs?>(null) }
     val createDocumentLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/markdown"),
     ) { uri ->
-        val tabId = pendingSaveThenCloseTabId
-        pendingSaveThenCloseTabId = null
-        if (uri != null && tabId != null) {
-            if (viewModel.saveTabAs(tabId, uri.toString())) {
-                viewModel.confirmClose(tabId)
+        val request = pendingSaveAs
+        pendingSaveAs = null
+        if (uri != null && request != null) {
+            val saved = viewModel.saveTabAs(request.tabId, uri.toString())
+            if (saved && request.closeAfter) {
+                viewModel.confirmClose(request.tabId)
             }
         }
     }
@@ -129,10 +130,26 @@ fun ShellScreen(viewModel: AppViewModel) {
                             onClick = {
                                 menuExpanded = false
                                 val tab = selectedTab ?: return@DropdownMenuItem
-                                if (!viewModel.saveTab(tab.id)) {
-                                    pendingSaveThenCloseTabId = null
-                                    createDocumentLauncher.launch("Untitled.md")
+                                if (tab.document.uri != null) {
+                                    viewModel.saveTab(tab.id)
+                                } else {
+                                    pendingSaveAs = PendingSaveAs(tab.id, closeAfter = false)
+                                    createDocumentLauncher.launch(
+                                        suggestedFileName(tab.document.displayName),
+                                    )
                                 }
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Save As…") },
+                            enabled = selectedTab?.document is ViewerDocument.Markdown,
+                            onClick = {
+                                menuExpanded = false
+                                val tab = selectedTab ?: return@DropdownMenuItem
+                                pendingSaveAs = PendingSaveAs(tab.id, closeAfter = false)
+                                createDocumentLauncher.launch(
+                                    suggestedFileName(tab.document.displayName),
+                                )
                             },
                         )
                     }
@@ -183,13 +200,15 @@ fun ShellScreen(viewModel: AppViewModel) {
             UnsavedCloseDialog(
                 tab = tab,
                 onSave = {
-                    if (!viewModel.saveTab(tabId)) {
-                        pendingSaveThenCloseTabId = tabId
+                    if (tab.document.uri != null) {
+                        if (viewModel.saveTab(tabId)) {
+                            viewModel.confirmClose(tabId)
+                        }
+                    } else {
+                        pendingSaveAs = PendingSaveAs(tabId, closeAfter = true)
                         createDocumentLauncher.launch(
                             suggestedFileName(tab.document.displayName),
                         )
-                    } else {
-                        viewModel.confirmClose(tabId)
                     }
                 },
                 onDiscard = { viewModel.confirmClose(tabId) },
@@ -198,6 +217,8 @@ fun ShellScreen(viewModel: AppViewModel) {
         }
     }
 }
+
+private data class PendingSaveAs(val tabId: String, val closeAfter: Boolean)
 
 private fun suggestedFileName(displayName: String): String =
     if (displayName.endsWith(".md", ignoreCase = true)) displayName else "$displayName.md"
