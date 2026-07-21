@@ -1,0 +1,145 @@
+# FileViewer Android — Handoff
+
+Last updated: 2026-07-21
+Active repo (local): `/Users/patrickshi/KimiCoding/FileViewer`
+GitHub remote: `https://github.com/timetochilltoo/FileViewerAndroid.git`
+Git identity (already in Patrick's global git config): user `timetochilltoo`, email `152804118+timetochilltoo@users.noreply.github.com`
+Current branch: `main`
+Current committed baseline: `f46dfe9` (`Phase 0: Android project skeleton + PDF annotation-write spike`)
+
+> This document is the single source of truth for taking over the project. The **scope/plan** source of truth is `docs/android-requirements-and-plan.md` (v2). Where they conflict, the plan wins on scope and this file wins on environment/status.
+
+---
+
+## 1. Project purpose
+
+FileViewer Android is Patrick's local-first native Android port of his macOS FileViewer (see that repo's `HANDOFF.md` for the original). It covers:
+
+- Markdown notes (`.md`, `.markdown`) — view, edit, search, formatting toolbar
+- PDFs (`.pdf`) — view, navigate, zoom, search, thumbnails, outline, text reflow reading mode
+- Multiple open documents via tabs
+- Unsaved-changes protection, session restore, per-file state restore
+- Print / export
+- PDF annotations + fillable forms are **P2/P3 nice-to-have**, gated on the Phase 0 spike (which **passed**)
+
+Explicitly **out of scope**: AI features, cloud sync/accounts, multi-window, phone split-mode, preview-selection formatting, OCR, EPUB/DOCX, Play Store release (personal-use app, sideloaded APK).
+
+## 2. Environment (macOS host specifics — read first)
+
+Patrick's machine has quirks every command must respect:
+
+- **No system Java.** `java` is not on PATH. Every Gradle/sdkmanager command needs:
+  ```bash
+  export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+  ```
+  (Android Studio's bundled JetBrains Runtime, JDK 21.) `gradle.properties` already sets `org.gradle.java.home` for the daemon, but the `gradlew` launcher script itself also needs `JAVA_HOME`.
+- **Android SDK**: `~/Library/Android/sdk` (platforms: android-34, android-36.1; build-tools 34/36.1/37). `local.properties` (gitignored) points `sdk.dir` there.
+- **cmdline-tools**: installed by the previous agent at `~/Library/Android/sdk/cmdline-tools/latest` (was missing; downloaded from `dl.google.com`). Provides `sdkmanager`/`avdmanager`.
+- **Emulator**: AVD `fileviewer_test` exists (pixel_6, API 34, google_apis, arm64). Boot headless:
+  ```bash
+  nohup ~/Library/Android/sdk/emulator/emulator -avd fileviewer_test -no-window -no-audio -gpu swiftshader_indirect -no-snapshot-save > /tmp/emulator.log 2>&1 & disown
+  ```
+  Boot takes ~60–90s. Poll `adb shell getprop sys.boot_completed` for `1`.
+  **Gotcha:** the agent shell kills the process group when a command times out — always launch the emulator with `nohup ... & disown` and poll in *separate, short* commands, or the emulator dies with the polling command.
+- **No `timeout` command on macOS** — use shell loops with counters instead.
+- **adb** at `~/Library/Android/sdk/platform-tools/adb`, works.
+
+## 3. Build / test commands
+
+```bash
+cd /Users/patrickshi/KimiCoding/FileViewer
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+
+./gradlew assembleDebug               # debug APK → app/build/outputs/apk/debug/app-debug.apk
+./gradlew testDebugUnitTest           # JVM unit tests (Robolectric available)
+./gradlew connectedDebugAndroidTest   # instrumented tests — needs booted emulator/device
+./gradlew lint                        # lint
+```
+
+## 4. Version pins (do not bump casually)
+
+| Component | Version | Note |
+|---|---|---|
+| Gradle wrapper | 8.9 | generated with Homebrew gradle 9.6.1 (only used once to generate) |
+| AGP | 8.7.3 | |
+| Kotlin | 2.0.21 | with `org.jetbrains.kotlin.plugin.compose` |
+| compileSdk / targetSdk | 34 / 34 | `androidx.core:core-ktx:1.15.0` requires compileSdk 35 → **core-ktx is pinned to 1.13.1**; bump both together later if needed (android-36.1 platform is installed but AGP 8.7.3 doesn't know API 36) |
+| Compose BOM | 2024.12.01 | |
+| activity-compose / lifecycle / datastore | 1.9.3 / 2.8.7 / 1.1.1 | |
+| Markwon (core, ext-tables, ext-tasklist, ext-strikethrough) | 4.6.2 | Markdown rendering |
+| `io.legere:pdfiumandroid` | 1.0.24 | PDF render/search/text only — **no annotation APIs** |
+| `com.tom-roush:pdfbox-android` | 2.0.27.0 | PDF annotation/form **write-back** |
+| junit / robolectric / androidx-test / espresso | 4.13.2 / 4.14.1 / 1.2.1 / 3.6.1 | |
+
+All pins live in `gradle/libs.versions.toml`.
+
+## 5. Key architectural decisions (and why)
+
+1. **Two PDF libraries, separate jobs.** Pdfium (`io.legere`) is fast but has zero annotation APIs (verified by inspecting the AAR). PDFBox-Android writes annotations/forms but is too slow for interactive rendering. → **Pdfium renders/searches/extracts text; PDFBox-Android loads the file fresh, applies annotation/form changes, saves via SAF.** The two never share a live document object.
+2. **MVVM + Compose, per-tab state.** `AppViewModel` holds `tabs: StateFlow<List<DocumentTab>>`; everything document-specific (search text/matches, pdfPage/scale, scroll offsets, dirty flags) lives inside the immutable `DocumentTab`, never at root. This mirrors the macOS `AppModel`/`DocumentTab` split and its hard-won lessons.
+3. **State-boundary rules** (from macOS bugs; enforce in review):
+   - Sync page/scale/search *into* wrapped views (Pdfium view, Markwon preview) on explicit events (request-ID pattern), never on every recomposition — prevents the "scrolls back to search hit" bug.
+   - Guard every PDF callback against page index `-1` and stale document identity.
+   - One writable instance per file: opening an already-open URI selects its tab.
+4. **Single-window tab model** — no multi-window/multi-instance (cut in plan v2).
+5. **SAF everywhere** — no direct file paths; persistable URI permissions taken on open; write via `ContentResolver.openOutputStream(uri, "wt")` with Save-Copy-As fallback.
+6. **No `INTERNET` permission** — local-first.
+
+## 6. Phase 0 spike verdict (detailed in `docs/pdf-annotation-spike.md`)
+
+**PASSED — full annotation scope per plan is feasible.** 3/3 instrumented tests green on emulator (`app/src/androidTest/.../PdfAnnotationSpikeTest.kt`):
+
+- Highlight (`PDAnnotationTextMarkup` + quad points + color + 55% opacity) → save → reload ✓
+- FreeText → save → reload ✓ — **`PDAnnotationFreeText` is NOT shipped in pdfbox-android**; construct at COS level (`COSDictionary` `/Subtype /FreeText` wrapped in `PDAnnotationMarkup`). Same trick needed for Ink (P3).
+- AcroForm text-field fill → save → reload ✓ — requires `acroForm.defaultResources` with a `Helv` font or appearance generation fails.
+- Port also ships `PDAnnotationText` (sticky note), `PDAnnotationSquareCircle`, `PDAnnotationLine` → covers PDF-11/12 and most of PDF-16.
+- **Test-assets gotcha:** read fixtures via `InstrumentationRegistry.getInstrumentation().context` (test APK), NOT `targetContext` (app APK) — cost one failing run.
+
+## 7. Current code map (all that exists so far)
+
+```text
+app/src/main/java/com/timetochilltoo/fileviewer/
+├── app/
+│   ├── MainActivity.kt          # ComponentActivity, edge-to-edge, hosts ShellScreen
+│   └── theme/Theme.kt           # FileViewerTheme: system light/dark M3
+├── core/
+│   ├── model/
+│   │   ├── DocumentKind.kt      # MARKDOWN | PDF
+│   │   └── DocumentTab.kt       # immutable per-tab state (search/pdf/scroll/dirty) — extend here
+│   └── files/
+│       └── RecentDocument.kt    # uri, displayName, lastOpenedEpochMs
+└── feature/
+    ├── shell/ShellScreen.kt     # placeholder empty state ("No documents open")
+    ├── markdown/MarkdownWorkspace.kt   # placeholder — Phase 2
+    └── pdf/PdfWorkspace.kt             # placeholder — Phase 4
+app/src/androidTest/
+├── assets/fixture_hello.pdf     # generated 1-page PDF ("Hello FileViewer Spike", Helvetica 24 @ 72,720)
+└── java/.../feature/pdf/PdfAnnotationSpikeTest.kt   # 3 passing spike tests
+```
+
+- Manifest: single `MainActivity` (`singleTask`, configChanges handled), intent filters for PDF (`application/pdf`), Markdown (`text/markdown`, `text/plain`), extension-based `*/*` filters with `pathPattern` for `.md`/`.markdown`/`.pdf`, VIEW+SEND. Refine in Phase 1 when wiring real ingress.
+- Adaptive icon: indigo `#3949AB` + white document vector (placeholder quality, fine for personal use).
+- The fixture PDF generator script is **not** committed; regenerate via Python if needed (see spike doc / git history).
+
+## 8. Status & what's next
+
+**Done: Phase 0** — skeleton, build green, spike passed, emulator created, initial commit pushed.
+
+**Next: Phase 1 — Document model + tabs + file open (~1 wk)** per plan §5:
+
+1. `AppViewModel`: `tabs: StateFlow<List<DocumentTab>>`, `selectedTabId`, open/select/close/new-untitled; duplicate-URI guard (DM-4).
+2. SAF `OpenMultipleDocuments` + persistable permission (DM-1/7); share-sheet/`ACTION_SEND`/`ACTION_VIEW` ingress (DM-3); Markdown read as UTF-8, PDF via `ParcelFileDescriptor` → Pdfium.
+3. Compose shell: top bar, `ScrollableTabRow` with dirty dot + close, workspace switch by `DocumentKind`, empty state with recents (UX-3).
+4. Back-press chain: drawer → clear search → dirty-tab prompt (UX-6).
+5. Unsaved-close dialog: Save / Don't Save / Cancel (DM-5).
+
+Then Phase 2 (Markdown MVP), Phase 3 (formatting/search/guide), Phase 4 (PDF core incl. text reflow), Phase 7 (polish/personal release). Phases 5–6 (annotations) are optional, gated — spike already green-lit them.
+
+**Tests to write in Phase 1** (Robolectric): duplicate-open guard, dirty tracking, close-prompt logic, share-intent routing.
+
+## 9. Working agreements
+
+- Commit + push to `main` when a meaningful unit is done (Patrick prefers this).
+- Keep `docs/android-requirements-and-plan.md` and this handoff updated when scope/status changes.
+- Verification before committing: `assembleDebug` + relevant tests green; manual run on `fileviewer_test` emulator for UI changes.
+- Explain changes to Patrick in practical, non-technical terms unless debugging detail is needed.
