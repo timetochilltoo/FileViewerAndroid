@@ -1,11 +1,11 @@
 # FileViewer Android — Handoff
 
-Last updated: 2026-07-21
+Last updated: 2026-07-21 (Phase 1 complete)
 Active repo (local): `/Users/patrickshi/KimiCoding/FileViewer`
 GitHub remote: `https://github.com/timetochilltoo/FileViewerAndroid.git`
 Git identity (already in Patrick's global git config): user `timetochilltoo`, email `152804118+timetochilltoo@users.noreply.github.com`
 Current branch: `main`
-Current committed baseline: `f46dfe9` (`Phase 0: Android project skeleton + PDF annotation-write spike`)
+Current committed baseline: see `git log -1` (Phase 1 commit)
 
 > This document is the single source of truth for taking over the project. The **scope/plan** source of truth is `docs/android-requirements-and-plan.md` (v2). Where they conflict, the plan wins on scope and this file wins on environment/status.
 
@@ -95,47 +95,88 @@ All pins live in `gradle/libs.versions.toml`.
 - Port also ships `PDAnnotationText` (sticky note), `PDAnnotationSquareCircle`, `PDAnnotationLine` → covers PDF-11/12 and most of PDF-16.
 - **Test-assets gotcha:** read fixtures via `InstrumentationRegistry.getInstrumentation().context` (test APK), NOT `targetContext` (app APK) — cost one failing run.
 
-## 7. Current code map (all that exists so far)
+## 7. Current code map
 
 ```text
 app/src/main/java/com/timetochilltoo/fileviewer/
 ├── app/
-│   ├── MainActivity.kt          # ComponentActivity, edge-to-edge, hosts ShellScreen
+│   ├── MainActivity.kt          # single activity; routes VIEW/SEND/SEND_MULTIPLE via IntentRouter
+│   │                            #   onCreate (cold start only) + onNewIntent (singleTask)
 │   └── theme/Theme.kt           # FileViewerTheme: system light/dark M3
 ├── core/
 │   ├── model/
 │   │   ├── DocumentKind.kt      # MARKDOWN | PDF
-│   │   └── DocumentTab.kt       # immutable per-tab state (search/pdf/scroll/dirty) — extend here
+│   │   ├── ViewerDocument.kt    # sealed: Markdown(uri?, text, savedText) | Pdf(uri, pageCount, handle)
+│   │   ├── DocumentTab.kt       # immutable per-tab state; hasUnsavedChanges computed (md: text != savedText)
+│   │   └── TabManager.kt        # PURE tab-list logic (add/select/update/remove/findByUri) — no Android deps, unit-tested
 │   └── files/
-│       └── RecentDocument.kt    # uri, displayName, lastOpenedEpochMs
+│       ├── DocumentRepository.kt # SAF: load(uri)->ViewerDocument, displayName, kindFor (ext-based), writeMarkdown
+│       ├── PdfHandle.kt         # PdfiumCore + ParcelFileDescriptor + PdfDocument; close() on tab close
+│       ├── RecentsStore.kt      # DataStore JSON list, dedupe by uri, cap 20
+│       ├── RecentDocument.kt
+│       └── IntentRouter.kt      # Intent -> Ingress (OpenUris | SharedText | None), Robolectric-tested
 └── feature/
-    ├── shell/ShellScreen.kt     # placeholder empty state ("No documents open")
-    ├── markdown/MarkdownWorkspace.kt   # placeholder — Phase 2
-    └── pdf/PdfWorkspace.kt             # placeholder — Phase 4
+    ├── shell/
+    │   ├── AppViewModel.kt      # AndroidViewModel; ONE ShellUiState flow (tabs+selectedTabId) — see lesson 7.1
+    │   │                        # close-request flow, save/save-as, recents, status message
+    │   └── ShellScreen.kt       # TopAppBar+overflow menu, custom TabStrip (see lesson 7.1), StatusStrip,
+    │                            # EmptyState w/ recents, UnsavedCloseDialog, back-press chain
+    ├── markdown/MarkdownWorkspace.kt   # minimal BasicTextField editor (Phase 2 replaces with preview/split)
+    └── pdf/PdfWorkspace.kt             # placeholder: name + page count (Phase 4 builds the viewer)
 app/src/androidTest/
-├── assets/fixture_hello.pdf     # generated 1-page PDF ("Hello FileViewer Spike", Helvetica 24 @ 72,720)
-└── java/.../feature/pdf/PdfAnnotationSpikeTest.kt   # 3 passing spike tests
+├── assets/fixture_hello.pdf     # generated 1-page PDF
+└── java/.../feature/pdf/PdfAnnotationSpikeTest.kt   # 3 passing spike tests (Phase 0)
+app/src/test/
+├── core/model/TabManagerTest.kt     # 9 tests: duplicate guard, selection fixup, dirty logic
+└── core/files/IntentRouterTest.kt   # 5 tests: VIEW/SEND/SEND_MULTIPLE routing (Robolectric)
 ```
 
-- Manifest: single `MainActivity` (`singleTask`, configChanges handled), intent filters for PDF (`application/pdf`), Markdown (`text/markdown`, `text/plain`), extension-based `*/*` filters with `pathPattern` for `.md`/`.markdown`/`.pdf`, VIEW+SEND. Refine in Phase 1 when wiring real ingress.
-- Adaptive icon: indigo `#3949AB` + white document vector (placeholder quality, fine for personal use).
+- Manifest: single `MainActivity` (`singleTask`, configChanges handled), intent filters for PDF (`application/pdf`), Markdown (`text/markdown`, `text/plain`), extension-based `*/*` filters with `pathPattern` for `.md`/`.markdown`/`.pdf`, VIEW+SEND.
+- URIs are stored as **String** in model classes (never `android.net.Uri`) so `core.model` stays pure-JVM-testable.
+- Adaptive icon: indigo `#3949AB` + white document vector (placeholder quality).
 - The fixture PDF generator script is **not** committed; regenerate via Python if needed (see spike doc / git history).
+
+### 7.1 State-hoisting lesson (Phase 1 bug 1)
+
+Two separate `StateFlow`s for `tabs` and `selectedTabId` caused state tearing: Compose recomposed between the two writes, and `ScrollableTabRow` crashed with `IndexOutOfBoundsException` (its subcomposed tabPositions lag one frame behind `selectedTabIndex`). Fixes applied:
+
+1. **Single `ShellUiState(tabs, selectedTabId)` flow** — one atomic write per mutation. Keep this pattern: never expose two flows that must change together.
+2. **Custom `TabStrip`** (horizontal-scroll Row of Surface chips) replaced `ScrollableTabRow` entirely — the M3 row can crash even with consistent state because of the subcomposition lag when tabs are added. Do not reintroduce `ScrollableTabRow` for dynamic tab lists.
+
+### 7.2 `file://` URIs are dead on modern Android (Phase 1 bug 2)
+
+Scoped storage (API 30+) blocks raw-path reads via `file://` even with correct permissions (`EACCES`). This is expected OS behavior, not an app bug:
+
+- Real-world ingress is `content://` (SAF picker, file managers, share sheets) which carries a read grant. `DocumentRepository.takePersistablePermission` then makes it durable.
+- `text/plain` and `*/*`-with-pathPattern filters exist for old file managers; files that still arrive as `file://` outside our sandbox will fail — acceptable, the app shows "Could not open document" (visible on the empty state too).
+- **Emulator smoke-test procedure** (SAF grants can't be scripted via adb):
+  ```bash
+  adb shell chmod 777 /data/local/tmp
+  adb push fixture.pdf /data/local/tmp/ && adb shell chmod 644 /data/local/tmp/fixture.pdf
+  adb shell "run-as com.timetochilltoo.fileviewer cp /data/local/tmp/fixture.pdf \
+    /data/data/com.timetochilltoo.fileviewer/files/test.pdf"   # no nested sh -c — quoting breaks it
+  adb shell am start -a android.intent.action.VIEW \
+    -d "file:///data/data/com.timetochilltoo.fileviewer/files/test.pdf" \
+    -t application/pdf com.timetochilltoo.fileviewer
+  adb exec-out screencap -p > shot.png
+  ```
+  Works because an app can always read its own internal files dir via raw path.
 
 ## 8. Status & what's next
 
-**Done: Phase 0** — skeleton, build green, spike passed, emulator created, initial commit pushed.
+**Done:**
+- **Phase 0** — skeleton, build green, spike passed, emulator created.
+- **Phase 1** — document model (`TabManager`, `ViewerDocument`, `DocumentTab`), tabs UI (custom strip, dirty dot, close), SAF open (multi-select), share/VIEW ingress, unsaved-close dialog (Save / Don't Save / Cancel incl. untitled→Save As flow), save/save-as via SAF, recents (DataStore + empty-state list), status strip, back-press close chain. 14 unit tests + 3 instrumented spike tests green; on-device smoke test (open PDF + MD via intents → 2 tabs) verified with screenshots.
 
-**Next: Phase 1 — Document model + tabs + file open (~1 wk)** per plan §5:
+**Next: Phase 2 — Markdown MVP (~1.5 wks)** per plan §5:
 
-1. `AppViewModel`: `tabs: StateFlow<List<DocumentTab>>`, `selectedTabId`, open/select/close/new-untitled; duplicate-URI guard (DM-4).
-2. SAF `OpenMultipleDocuments` + persistable permission (DM-1/7); share-sheet/`ACTION_SEND`/`ACTION_VIEW` ingress (DM-3); Markdown read as UTF-8, PDF via `ParcelFileDescriptor` → Pdfium.
-3. Compose shell: top bar, `ScrollableTabRow` with dirty dot + close, workspace switch by `DocumentKind`, empty state with recents (UX-3).
-4. Back-press chain: drawer → clear search → dirty-tab prompt (UX-6).
-5. Unsaved-close dialog: Save / Don't Save / Cancel (DM-5).
+1. Markwon setup (core + tables + tasklist + strikethrough already in deps) in an `AndroidView`.
+2. Proper source editor: replace minimal `BasicTextField` with `TextFieldValue`-based editor exposing selection to the ViewModel (Phase 3 formatting needs it); monospaced, no autocorrect.
+3. Mode segmented control (Preview / Source; Split only ≥ 840dp).
+4. Debounced (~150ms) preview refresh.
+5. Session snapshot to DataStore + restore on launch; suppress when launched from external intent (DM-9); per-file Markdown scroll restore (DM-10).
 
-Then Phase 2 (Markdown MVP), Phase 3 (formatting/search/guide), Phase 4 (PDF core incl. text reflow), Phase 7 (polish/personal release). Phases 5–6 (annotations) are optional, gated — spike already green-lit them.
-
-**Tests to write in Phase 1** (Robolectric): duplicate-open guard, dirty tracking, close-prompt logic, share-intent routing.
+Then Phase 3 (formatting/search/guide), Phase 4 (PDF core incl. text reflow), Phase 7 (polish). Phases 5–6 (annotations) optional — spike green-lit.
 
 ## 9. Working agreements
 
