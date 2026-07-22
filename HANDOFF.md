@@ -1,6 +1,6 @@
 # FileViewer Android — Handoff
 
-Last updated: 2026-07-22 (Phase 2 complete)
+Last updated: 2026-07-22 (Phase 3 complete)
 Active repo (local): `/Users/patrickshi/KimiCoding/FileViewer`
 GitHub remote: `https://github.com/timetochilltoo/FileViewerAndroid.git`
 Git identity (already in Patrick's global git config): user `timetochilltoo`, email `152804118+timetochilltoo@users.noreply.github.com`
@@ -187,15 +187,21 @@ Scoped storage (API 30+) blocks raw-path reads via `file://` even with correct p
 - **Save-flow fix** — 0-byte file when saving untitled doc from overflow menu (`PendingSaveAs`), plus Save As menu item (`c6086d4`).
 - **Phase 2** — Markwon preview (tables/tasklist/strikethrough, 150ms debounce), TextFieldValue source editor (no autocorrect), Preview/Source/Split modes (Split ≥840dp), session restore with external-intent suppression, per-file preview-scroll restore. 7 SessionCodec tests added (21 unit tests total). Smoke-verified: source edit, preview render, force-stop→relaunch restores both tabs with selection.
 
-**Next: Phase 3 — Markdown formatting + search + guide (~1.5 wks)** per plan §5:
+**Phase 3** — `MarkdownFormatter` (bold/italic/underline-HTML/heading/bullet/numbered/quote/link/code/table/task-list), formatting toolbar (Format dropdown + icon buttons, underline labeled “HTML underline”), search with preview span highlight (yellow/orange), counter, prev/next, Navigate panel with Markdown heading list, and a Markdown Syntax Guide screen. 21 unit tests added (formatter toggles + outline). Smoke-verified: heading underline in preview removed via `MarkwonTheme.Builder.headingBreakHeight(0)`; toolbar, search, drawer, and guide all work on device.
 
-1. `MarkdownFormatter` pure-Kotlin port of the macOS toggle logic (bold/italic/underline-HTML/heading/bullet/numbered/quote/link/code/table/task-list), UTF-16 index math — this is the biggest unit-test surface of the phase.
-2. Formatting toolbar: Format dropdown + icon buttons; underline labeled "HTML underline"; placeholder insertion with no selection. Needs the editor's selection — `MarkdownSourceEditor` must expose `TextFieldValue.selection` up to the ViewModel (add per-tab selection state or an editor-state holder).
-3. Search: literal find over source → preview span highlight (yellow/orange), counter, prev/next, `IME_ACTION_SEARCH`.
-4. Navigate panel: Markdown heading list (drawer).
-5. Markdown Syntax Guide screen.
+**Next: Phase 4 — PDF viewer core (2 wks)** per plan §5:
 
-Then Phase 4 (PDF core incl. text reflow), Phase 7 (polish). Phases 5–6 (annotations) optional — spike green-lit.
+1. Pdfium integration behind `PdfDocumentHandle` (page count, render at scale, page size, text extraction).
+2. `PdfViewerView`: continuous vertical scroll, fling, pinch/double-tap zoom, page-change callback; wrapped in `AndroidView`.
+3. Guard rails: clamped page callbacks, ignore `-1`, stale-document checks.
+4. Toolbar: page nav, go-to-page, zoom in/out, fit width/page.
+5. Text reflow / reading mode (PDF-4): extract text per page, render as resizable Compose text.
+6. Per-file page/zoom persistence.
+7. Navigate panel: thumbnails (lazy 96dp renders) + outline when available.
+8. Search: Pdfium `findAll`, highlight rects overlay, event-driven navigation, counter “PDF: n of N”.
+9. Print PDF (PDF-9).
+
+Then Phase 7 (polish). Phases 5–6 (annotations) remain optional — spike green-lit.
 
 ## 9. Working agreements
 

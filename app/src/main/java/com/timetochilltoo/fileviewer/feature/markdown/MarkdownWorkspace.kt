@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -17,6 +18,9 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.timetochilltoo.fileviewer.core.model.DocumentTab
+import com.timetochilltoo.fileviewer.core.model.EditorSelection
+import com.timetochilltoo.fileviewer.core.model.HeadingJump
+import com.timetochilltoo.fileviewer.core.model.MarkdownFormatCommand
 import com.timetochilltoo.fileviewer.core.model.MarkdownMode
 import com.timetochilltoo.fileviewer.core.model.ViewerDocument
 
@@ -29,6 +33,10 @@ fun MarkdownWorkspace(
     onModeChange: (MarkdownMode) -> Unit,
     onTextChange: (String) -> Unit,
     onPreviewScroll: (Int) -> Unit,
+    onSelectionChange: (Int, Int) -> Unit,
+    selectionOverride: EditorSelection?,
+    headingJump: HeadingJump?,
+    onFormatCommand: (MarkdownFormatCommand) -> Unit,
 ) {
     val document = tab.document as? ViewerDocument.Markdown ?: return
 
@@ -46,18 +54,27 @@ fun MarkdownWorkspace(
                 showSplit = showSplit,
                 onModeChange = onModeChange,
             )
+            if (effectiveMode != MarkdownMode.PREVIEW) {
+                FormattingToolbar(onCommand = onFormatCommand)
+                HorizontalDivider()
+            }
             key(tab.id) {
                 when (effectiveMode) {
                     MarkdownMode.SOURCE -> MarkdownSourceEditor(
                         tabId = tab.id,
                         text = document.text,
                         onTextChange = onTextChange,
+                        onSelectionChange = onSelectionChange,
+                        selectionOverride = selectionOverride,
                     )
 
                     MarkdownMode.PREVIEW -> MarkdownPreview(
                         text = document.text,
                         initialScrollY = tab.markdownScrollY,
                         onScroll = onPreviewScroll,
+                        searchText = tab.searchText,
+                        searchMatchIndex = tab.searchMatchIndex,
+                        headingJump = headingJump,
                     )
 
                     MarkdownMode.SPLIT -> Row(modifier = Modifier.fillMaxSize()) {
@@ -65,6 +82,8 @@ fun MarkdownWorkspace(
                             tabId = tab.id,
                             text = document.text,
                             onTextChange = onTextChange,
+                            onSelectionChange = onSelectionChange,
+                            selectionOverride = selectionOverride,
                             modifier = Modifier.weight(1f),
                         )
                         VerticalDivider()
@@ -72,6 +91,9 @@ fun MarkdownWorkspace(
                             text = document.text,
                             initialScrollY = tab.markdownScrollY,
                             onScroll = onPreviewScroll,
+                            searchText = tab.searchText,
+                            searchMatchIndex = tab.searchMatchIndex,
+                            headingJump = headingJump,
                             modifier = Modifier.weight(1f),
                         )
                     }

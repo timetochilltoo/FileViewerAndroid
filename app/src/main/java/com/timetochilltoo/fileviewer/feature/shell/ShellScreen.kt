@@ -23,8 +23,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -32,33 +42,40 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.timetochilltoo.fileviewer.core.files.RecentDocument
 import com.timetochilltoo.fileviewer.core.model.DocumentTab
+import com.timetochilltoo.fileviewer.core.model.MarkdownOutline
 import com.timetochilltoo.fileviewer.core.model.ViewerDocument
+import com.timetochilltoo.fileviewer.feature.markdown.MarkdownGuideScreen
 import com.timetochilltoo.fileviewer.feature.markdown.MarkdownWorkspace
 import com.timetochilltoo.fileviewer.feature.pdf.PdfWorkspace
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -68,10 +85,17 @@ fun ShellScreen(viewModel: AppViewModel) {
     val statusMessage by viewModel.statusMessage.collectAsState()
     val recents by viewModel.recents.collectAsState()
     val markdownMode by viewModel.markdownMode.collectAsState()
+    val selectionOverride by viewModel.editorSelectionOverride.collectAsState()
+    val headingJump by viewModel.headingJump.collectAsState()
 
     val tabs = uiState.tabs
     val selectedTabId = uiState.selectedTabId
     val selectedTab = tabs.firstOrNull { it.id == selectedTabId }
+
+    var searchVisible by rememberSaveable { mutableStateOf(false) }
+    var showGuide by rememberSaveable { mutableStateOf(false) }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
 
     var pendingSaveAs by remember { mutableStateOf<PendingSaveAs?>(null) }
     val createDocumentLauncher = rememberLauncherForActivityResult(
@@ -93,107 +117,180 @@ fun ShellScreen(viewModel: AppViewModel) {
         viewModel.openUris(uris.map { it.toString() })
     }
 
-    BackHandler(enabled = tabs.isNotEmpty()) {
-        viewModel.requestCloseSelectedTab()
+    BackHandler(enabled = drawerState.isOpen) {
+        scope.launch { drawerState.close() }
+    }
+    BackHandler(enabled = !drawerState.isOpen && tabs.isNotEmpty()) {
+        if (searchVisible && selectedTab?.searchText?.isNotBlank() == true) {
+            viewModel.setSearchText(selectedTab.id, "")
+        } else {
+            viewModel.requestCloseSelectedTab()
+        }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("FileViewer") },
-                actions = {
-                    var menuExpanded by remember { mutableStateOf(false) }
-                    IconButton(onClick = { menuExpanded = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Menu")
-                    }
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("New Markdown Document") },
-                            onClick = {
-                                menuExpanded = false
-                                viewModel.newMarkdownDocument()
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Open…") },
-                            onClick = {
-                                menuExpanded = false
-                                openDocumentLauncher.launch(arrayOf("*/*"))
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Save") },
-                            enabled = selectedTab?.hasUnsavedChanges == true &&
-                                selectedTab.document is ViewerDocument.Markdown,
-                            onClick = {
-                                menuExpanded = false
-                                val tab = selectedTab ?: return@DropdownMenuItem
-                                if (tab.document.uri != null) {
-                                    viewModel.saveTab(tab.id)
-                                } else {
+    if (showGuide) {
+        MarkdownGuideScreen(onClose = { showGuide = false })
+        return
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = tabs.isNotEmpty(),
+        drawerContent = {
+            ModalDrawerSheet {
+                DrawerContent(
+                    selectedTab = selectedTab,
+                    onHeadingClick = { headingText ->
+                        selectedTab?.let { viewModel.requestHeadingJump(it.id, headingText) }
+                        scope.launch { drawerState.close() }
+                    },
+                )
+            }
+        },
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("FileViewer") },
+                    navigationIcon = {
+                        if (tabs.isNotEmpty()) {
+                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                Icon(Icons.Default.Menu, contentDescription = "Contents")
+                            }
+                        }
+                    },
+                    actions = {
+                        if (tabs.isNotEmpty()) {
+                            IconButton(
+                                onClick = {
+                                    searchVisible = !searchVisible
+                                    if (!searchVisible) {
+                                        selectedTab?.let { viewModel.setSearchText(it.id, "") }
+                                    }
+                                },
+                            ) {
+                                Icon(Icons.Default.Search, contentDescription = "Search")
+                            }
+                        }
+                        var menuExpanded by remember { mutableStateOf(false) }
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Menu")
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("New Markdown Document") },
+                                onClick = {
+                                    menuExpanded = false
+                                    viewModel.newMarkdownDocument()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Open…") },
+                                onClick = {
+                                    menuExpanded = false
+                                    openDocumentLauncher.launch(arrayOf("*/*"))
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Save") },
+                                enabled = selectedTab?.hasUnsavedChanges == true &&
+                                    selectedTab.document is ViewerDocument.Markdown,
+                                onClick = {
+                                    menuExpanded = false
+                                    val tab = selectedTab ?: return@DropdownMenuItem
+                                    if (tab.document.uri != null) {
+                                        viewModel.saveTab(tab.id)
+                                    } else {
+                                        pendingSaveAs = PendingSaveAs(tab.id, closeAfter = false)
+                                        createDocumentLauncher.launch(
+                                            suggestedFileName(tab.document.displayName),
+                                        )
+                                    }
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Save As…") },
+                                enabled = selectedTab?.document is ViewerDocument.Markdown,
+                                onClick = {
+                                    menuExpanded = false
+                                    val tab = selectedTab ?: return@DropdownMenuItem
                                     pendingSaveAs = PendingSaveAs(tab.id, closeAfter = false)
                                     createDocumentLauncher.launch(
                                         suggestedFileName(tab.document.displayName),
                                     )
-                                }
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Save As…") },
-                            enabled = selectedTab?.document is ViewerDocument.Markdown,
-                            onClick = {
-                                menuExpanded = false
-                                val tab = selectedTab ?: return@DropdownMenuItem
-                                pendingSaveAs = PendingSaveAs(tab.id, closeAfter = false)
-                                createDocumentLauncher.launch(
-                                    suggestedFileName(tab.document.displayName),
-                                )
+                                },
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Markdown Guide") },
+                                onClick = {
+                                    menuExpanded = false
+                                    showGuide = true
+                                },
+                            )
+                        }
+                    },
+                )
+            },
+            bottomBar = {
+                if (tabs.isNotEmpty()) {
+                    StatusStrip(selectedTab, statusMessage)
+                }
+            },
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+            ) {
+                if (tabs.isNotEmpty()) {
+                    TabStrip(
+                        tabs = tabs,
+                        selectedTabId = selectedTabId,
+                        onSelect = viewModel::selectTab,
+                        onClose = viewModel::requestCloseTab,
+                    )
+                    if (searchVisible && selectedTab != null) {
+                        SearchBar(
+                            tab = selectedTab,
+                            onQueryChange = { viewModel.setSearchText(selectedTab.id, it) },
+                            onNext = { viewModel.nextSearchMatch(selectedTab.id) },
+                            onPrevious = { viewModel.previousSearchMatch(selectedTab.id) },
+                            onClose = {
+                                viewModel.setSearchText(selectedTab.id, "")
+                                searchVisible = false
                             },
                         )
                     }
-                },
-            )
-        },
-        bottomBar = {
-            if (tabs.isNotEmpty()) {
-                StatusStrip(selectedTab, statusMessage)
-            }
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-        ) {
-            if (tabs.isNotEmpty()) {
-                TabStrip(
-                    tabs = tabs,
-                    selectedTabId = selectedTabId,
-                    onSelect = viewModel::selectTab,
-                    onClose = viewModel::requestCloseTab,
-                )
-            }
-            when {
-                tabs.isEmpty() -> EmptyState(
-                    recents = recents,
-                    statusMessage = statusMessage,
-                    onOpen = { openDocumentLauncher.launch(arrayOf("*/*")) },
-                    onNewMarkdown = viewModel::newMarkdownDocument,
-                    onRecent = viewModel::reopenRecent,
-                )
+                }
+                when {
+                    tabs.isEmpty() -> EmptyState(
+                        recents = recents,
+                        statusMessage = statusMessage,
+                        onOpen = { openDocumentLauncher.launch(arrayOf("*/*")) },
+                        onNewMarkdown = viewModel::newMarkdownDocument,
+                        onRecent = viewModel::reopenRecent,
+                    )
 
-                selectedTab?.document is ViewerDocument.Markdown -> MarkdownWorkspace(
-                    tab = selectedTab,
-                    mode = markdownMode,
-                    onModeChange = viewModel::setMarkdownMode,
-                    onTextChange = { viewModel.updateMarkdownText(selectedTab.id, it) },
-                    onPreviewScroll = { viewModel.updateMarkdownScroll(selectedTab.id, it) },
-                )
+                    selectedTab?.document is ViewerDocument.Markdown -> MarkdownWorkspace(
+                        tab = selectedTab,
+                        mode = markdownMode,
+                        onModeChange = viewModel::setMarkdownMode,
+                        onTextChange = { viewModel.updateMarkdownText(selectedTab.id, it) },
+                        onPreviewScroll = { viewModel.updateMarkdownScroll(selectedTab.id, it) },
+                        onSelectionChange = { start, end ->
+                            viewModel.updateMarkdownSelection(selectedTab.id, start, end)
+                        },
+                        selectionOverride = selectionOverride,
+                        headingJump = headingJump,
+                        onFormatCommand = viewModel::applyMarkdownFormat,
+                    )
 
-                selectedTab?.document is ViewerDocument.Pdf -> PdfWorkspace(tab = selectedTab)
+                    selectedTab?.document is ViewerDocument.Pdf -> PdfWorkspace(tab = selectedTab)
+                }
             }
         }
     }
@@ -226,6 +323,103 @@ private data class PendingSaveAs(val tabId: String, val closeAfter: Boolean)
 
 private fun suggestedFileName(displayName: String): String =
     if (displayName.endsWith(".md", ignoreCase = true)) displayName else "$displayName.md"
+
+@Composable
+private fun DrawerContent(
+    selectedTab: DocumentTab?,
+    onHeadingClick: (String) -> Unit,
+) {
+    Column(modifier = Modifier.padding(16.dp)) {
+        Text("Contents", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(8.dp))
+        when (val document = selectedTab?.document) {
+            is ViewerDocument.Markdown -> {
+                val headings = MarkdownOutline.headings(document.text)
+                if (headings.isEmpty()) {
+                    Text(
+                        "No headings in this document",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                } else {
+                    LazyColumn {
+                        items(headings) { heading ->
+                            Text(
+                                text = heading.text,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onHeadingClick(heading.text) }
+                                    .padding(
+                                        start = ((heading.level - 1) * 16).dp,
+                                        top = 8.dp,
+                                        bottom = 8.dp,
+                                    ),
+                            )
+                        }
+                    }
+                }
+            }
+
+            is ViewerDocument.Pdf -> Text(
+                "PDF outline arrives in Phase 4",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+
+            null -> Text("No document open", style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@Composable
+private fun SearchBar(
+    tab: DocumentTab,
+    onQueryChange: (String) -> Unit,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        OutlinedTextField(
+            value = tab.searchText,
+            onValueChange = onQueryChange,
+            placeholder = { Text("Search") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { onNext() }),
+            modifier = Modifier.weight(1f),
+        )
+        if (tab.searchText.isNotBlank()) {
+            Text(
+                text = if (tab.searchMatchCount > 0) {
+                    "${tab.searchMatchIndex + 1}/${tab.searchMatchCount}"
+                } else {
+                    "0/0"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 6.dp),
+            )
+        }
+        IconButton(onClick = onPrevious, enabled = tab.searchMatchCount > 0) {
+            Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Previous match")
+        }
+        IconButton(onClick = onNext, enabled = tab.searchMatchCount > 0) {
+            Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Next match")
+        }
+        IconButton(onClick = onClose) {
+            Icon(Icons.Default.Close, contentDescription = "Close search")
+        }
+    }
+    HorizontalDivider()
+}
 
 @Composable
 private fun TabStrip(

@@ -1,6 +1,6 @@
 # FileViewer Android — Requirements & Development Plan
 
-Last updated: 2026-07-21 (v2 — review amendments applied)
+Last updated: 2026-07-22 (v3 — Phase 3 done)
 Reference: macOS FileViewer `HANDOFF.md` (baseline `834c986`)
 Scope: Android port of the macOS FileViewer for Markdown + PDF. **AI assistant is explicitly out of scope.** Personal-use app (not Play Store); distributed by sideloaded APK.
 

@@ -10,6 +10,10 @@ import com.timetochilltoo.fileviewer.core.files.SessionCodec
 import com.timetochilltoo.fileviewer.core.files.SessionStore
 import com.timetochilltoo.fileviewer.core.model.DocumentKind
 import com.timetochilltoo.fileviewer.core.model.DocumentTab
+import com.timetochilltoo.fileviewer.core.model.EditorSelection
+import com.timetochilltoo.fileviewer.core.model.HeadingJump
+import com.timetochilltoo.fileviewer.core.model.MarkdownFormatCommand
+import com.timetochilltoo.fileviewer.core.model.MarkdownFormatter
 import com.timetochilltoo.fileviewer.core.model.MarkdownMode
 import com.timetochilltoo.fileviewer.core.model.TabManager
 import com.timetochilltoo.fileviewer.core.model.ViewerDocument
@@ -46,6 +50,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _markdownMode = MutableStateFlow(MarkdownMode.SOURCE)
     val markdownMode: StateFlow<MarkdownMode> = _markdownMode.asStateFlow()
+
+    private val _editorSelectionOverride = MutableStateFlow<EditorSelection?>(null)
+    val editorSelectionOverride: StateFlow<EditorSelection?> =
+        _editorSelectionOverride.asStateFlow()
+
+    private val _headingJump = MutableStateFlow<HeadingJump?>(null)
+    val headingJump: StateFlow<HeadingJump?> = _headingJump.asStateFlow()
+
+    private val editorSelections = mutableMapOf<String, Pair<Int, Int>>()
 
     val recents: StateFlow<List<RecentDocument>> = recentsStore.recents
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -111,6 +124,73 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val tab = tabManager.findById(tabId) ?: return
         val uri = tab.document.uri ?: return
         scrollPositions[uri] = scrollY
+    }
+
+    fun updateMarkdownSelection(tabId: String, start: Int, end: Int) {
+        editorSelections[tabId] = start to end
+    }
+
+    fun applyMarkdownFormat(command: MarkdownFormatCommand) {
+        val tab = tabManager.selected ?: return
+        val markdown = tab.document as? ViewerDocument.Markdown ?: return
+        val (start, end) = editorSelections[tab.id]
+            ?: (markdown.text.length to markdown.text.length)
+        val result = MarkdownFormatter.apply(command, markdown.text, start, end)
+        updateMarkdownText(tab.id, result.text)
+        editorSelections[tab.id] = result.selectionStart to result.selectionEnd
+        _editorSelectionOverride.value = EditorSelection(
+            tabId = tab.id,
+            start = result.selectionStart,
+            end = result.selectionEnd,
+        )
+    }
+
+    fun setSearchText(tabId: String, query: String) {
+        val tab = tabManager.findById(tabId) ?: return
+        val count = when (val doc = tab.document) {
+            is ViewerDocument.Markdown -> countOccurrences(doc.text, query)
+            is ViewerDocument.Pdf -> 0
+        }
+        tabManager.update(
+            tab.copy(
+                searchText = query,
+                searchMatchCount = count,
+                searchMatchIndex = if (count > 0) 0 else -1,
+            ),
+        )
+        pushState()
+    }
+
+    fun nextSearchMatch(tabId: String) = stepSearchMatch(tabId, +1)
+
+    fun previousSearchMatch(tabId: String) = stepSearchMatch(tabId, -1)
+
+    private fun stepSearchMatch(tabId: String, delta: Int) {
+        val tab = tabManager.findById(tabId) ?: return
+        if (tab.searchMatchCount <= 0) return
+        val next = Math.floorMod(
+            tab.searchMatchIndex + delta,
+            tab.searchMatchCount,
+        )
+        tabManager.update(tab.copy(searchMatchIndex = next))
+        pushState()
+    }
+
+    private fun countOccurrences(haystack: String, needle: String): Int {
+        if (needle.isBlank()) return 0
+        var count = 0
+        var index = haystack.indexOf(needle, 0, ignoreCase = true)
+        while (index >= 0) {
+            count++
+            index = haystack.indexOf(needle, index + needle.length, ignoreCase = true)
+        }
+        return count
+    }
+
+    fun requestHeadingJump(tabId: String, headingText: String) {
+        if (tabManager.findById(tabId) == null) return
+        _headingJump.value = HeadingJump(tabId, headingText)
+        _markdownMode.value = MarkdownMode.PREVIEW
     }
 
     fun persistState() {
