@@ -1,5 +1,6 @@
 package com.timetochilltoo.fileviewer.feature.markdown
 
+import android.annotation.SuppressLint
 import android.text.Spannable
 import android.text.Spanned
 import android.text.style.BackgroundColorSpan
@@ -29,6 +30,7 @@ private const val PREVIEW_DEBOUNCE_MS = 150L
 private const val MATCH_COLOR = 0x66FFEB3B.toInt()
 private const val CURRENT_MATCH_COLOR = 0x66FF9800.toInt()
 
+@SuppressLint("ProduceStateDoesNotAssignValue")
 @Composable
 fun MarkdownPreview(
     text: String,

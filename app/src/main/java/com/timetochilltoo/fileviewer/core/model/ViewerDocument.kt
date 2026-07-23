@@ -1,6 +1,6 @@
 package com.timetochilltoo.fileviewer.core.model
 
-import com.timetochilltoo.fileviewer.core.files.PdfHandle
+import com.timetochilltoo.fileviewer.core.files.PdfDocumentHandle
 
 sealed interface ViewerDocument {
     val uri: String?
@@ -17,6 +17,6 @@ sealed interface ViewerDocument {
         override val uri: String,
         override val displayName: String,
         val pageCount: Int,
-        val handle: PdfHandle?,
+        val handle: PdfDocumentHandle?,
     ) : ViewerDocument
 }

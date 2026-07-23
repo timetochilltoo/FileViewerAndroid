@@ -84,12 +84,11 @@ class DocumentRepository(private val context: Context) {
         runCatching {
             val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return null
             val document = pdfiumCore.newDocument(pfd)
-            pdfiumCore.getPageCount(document)
             ViewerDocument.Pdf(
                 uri = uriString,
                 displayName = name,
                 pageCount = document.getPageCount(),
-                handle = PdfHandle(pdfiumCore, pfd, document),
+                handle = PdfHandle(pfd, document),
             )
         }.onFailure {
             android.util.Log.w("FileViewer", "loadPdf failed for $uriString", it)

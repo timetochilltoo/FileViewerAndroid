@@ -1,19 +1,25 @@
 package com.timetochilltoo.fileviewer.feature.shell
 
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -53,10 +59,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -64,18 +72,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.timetochilltoo.fileviewer.core.files.PdfDocumentHandle
 import com.timetochilltoo.fileviewer.core.files.RecentDocument
 import com.timetochilltoo.fileviewer.core.model.DocumentTab
 import com.timetochilltoo.fileviewer.core.model.MarkdownOutline
+import com.timetochilltoo.fileviewer.core.model.PdfScaleMode
 import com.timetochilltoo.fileviewer.core.model.ViewerDocument
 import com.timetochilltoo.fileviewer.feature.markdown.MarkdownGuideScreen
 import com.timetochilltoo.fileviewer.feature.markdown.MarkdownWorkspace
 import com.timetochilltoo.fileviewer.feature.pdf.PdfWorkspace
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,6 +102,7 @@ fun ShellScreen(viewModel: AppViewModel) {
     val markdownMode by viewModel.markdownMode.collectAsState()
     val selectionOverride by viewModel.editorSelectionOverride.collectAsState()
     val headingJump by viewModel.headingJump.collectAsState()
+    val pdfPageJump by viewModel.pdfPageJump.collectAsState()
 
     val tabs = uiState.tabs
     val selectedTabId = uiState.selectedTabId
@@ -128,6 +144,8 @@ fun ShellScreen(viewModel: AppViewModel) {
         }
     }
 
+    val activity = LocalContext.current as? Activity
+
     if (showGuide) {
         MarkdownGuideScreen(onClose = { showGuide = false })
         return
@@ -136,12 +154,16 @@ fun ShellScreen(viewModel: AppViewModel) {
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = tabs.isNotEmpty(),
-        drawerContent = {
+            drawerContent = {
             ModalDrawerSheet {
                 DrawerContent(
                     selectedTab = selectedTab,
                     onHeadingClick = { headingText ->
                         selectedTab?.let { viewModel.requestHeadingJump(it.id, headingText) }
+                        scope.launch { drawerState.close() }
+                    },
+                    onPdfPageClick = { page ->
+                        selectedTab?.let { viewModel.goToPdfPage(it.id, page) }
                         scope.launch { drawerState.close() }
                     },
                 )
@@ -223,7 +245,57 @@ fun ShellScreen(viewModel: AppViewModel) {
                                     )
                                 },
                             )
+                            DropdownMenuItem(
+                                text = { Text("Print") },
+                                enabled = selectedTab?.document is ViewerDocument.Pdf,
+                                onClick = {
+                                    menuExpanded = false
+                                    selectedTab?.let { tab ->
+                                        activity?.let {
+                                            viewModel.printPdf(tab.id, it)
+                                        }
+                                    }
+                                },
+                            )
                             HorizontalDivider()
+                            if (selectedTab?.document is ViewerDocument.Pdf) {
+                                DropdownMenuItem(
+                                    text = { Text("Fit Width") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        selectedTab?.let {
+                                            viewModel.setPdfScaleMode(it.id, PdfScaleMode.FIT_WIDTH)
+                                        }
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Fit Page") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        selectedTab?.let {
+                                            viewModel.setPdfScaleMode(it.id, PdfScaleMode.FIT_PAGE)
+                                        }
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            if (selectedTab?.pdfReadingMode == true) {
+                                                "Exit Reading Mode"
+                                            } else {
+                                                "Reading Mode"
+                                            },
+                                        )
+                                    },
+                                    onClick = {
+                                        menuExpanded = false
+                                        selectedTab?.let {
+                                            viewModel.setPdfReadingMode(it.id, !it.pdfReadingMode)
+                                        }
+                                    },
+                                )
+                                HorizontalDivider()
+                            }
                             DropdownMenuItem(
                                 text = { Text("Markdown Guide") },
                                 onClick = {
@@ -289,7 +361,26 @@ fun ShellScreen(viewModel: AppViewModel) {
                         onFormatCommand = viewModel::applyMarkdownFormat,
                     )
 
-                    selectedTab?.document is ViewerDocument.Pdf -> PdfWorkspace(tab = selectedTab)
+                    selectedTab?.document is ViewerDocument.Pdf -> {
+                        BoxWithConstraints(
+                            modifier = Modifier.fillMaxSize(),
+                        ) {
+                            val density = LocalDensity.current
+                            val widthPx = with(density) { maxWidth.toPx().toInt() }
+                            val heightPx = with(density) { maxHeight.toPx().toInt() }
+                            PdfWorkspace(
+                                tab = selectedTab,
+                                viewportWidth = widthPx,
+                                viewportHeight = heightPx,
+                                pdfPageJump = pdfPageJump,
+                                onConsumePageJump = viewModel::consumePdfPageJump,
+                                onPageChange = { viewModel.setPdfPage(selectedTab.id, it) },
+                                onScaleChange = { viewModel.setPdfScale(selectedTab.id, it) },
+                                onScaleModeChange = { viewModel.setPdfScaleMode(selectedTab.id, it) },
+                                onReadingModeChange = { viewModel.setPdfReadingMode(selectedTab.id, it) },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -328,6 +419,7 @@ private fun suggestedFileName(displayName: String): String =
 private fun DrawerContent(
     selectedTab: DocumentTab?,
     onHeadingClick: (String) -> Unit,
+    onPdfPageClick: (Int) -> Unit,
 ) {
     Column(modifier = Modifier.padding(16.dp)) {
         Text("Contents", style = MaterialTheme.typography.titleMedium)
@@ -364,14 +456,112 @@ private fun DrawerContent(
                 }
             }
 
-            is ViewerDocument.Pdf -> Text(
-                "PDF outline arrives in Phase 4",
-                style = MaterialTheme.typography.bodyMedium,
+            is ViewerDocument.Pdf -> PdfDrawerContent(
+                document = document,
+                onPageClick = onPdfPageClick,
             )
 
             null -> Text("No document open", style = MaterialTheme.typography.bodyMedium)
         }
     }
+}
+
+@Composable
+private fun PdfDrawerContent(
+    document: ViewerDocument.Pdf,
+    onPageClick: (Int) -> Unit,
+) {
+    val outline = remember(document.handle) {
+        document.handle?.outline().orEmpty()
+    }
+    if (outline.isEmpty()) {
+        Text(
+            "No PDF outline available",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Spacer(Modifier.height(8.dp))
+    } else {
+        LazyColumn {
+            items(outline) { item ->
+                Text(
+                    text = item.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onPageClick(item.pageIndex) }
+                        .padding(
+                            start = (item.depth * 16).dp,
+                            top = 8.dp,
+                            bottom = 8.dp,
+                        ),
+                )
+            }
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    HorizontalDivider()
+    Spacer(Modifier.height(8.dp))
+    Text("Pages", style = MaterialTheme.typography.titleSmall)
+    Spacer(Modifier.height(8.dp))
+    LazyColumn {
+        items(document.pageCount) { page ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onPageClick(page) }
+                    .padding(vertical = 4.dp),
+            ) {
+                document.handle?.let { handle ->
+                    val density = LocalDensity.current
+                    val maxWidthPx = with(density) { 96.dp.roundToPx() }
+                    PdfPageThumbnail(
+                        handle = handle,
+                        pageIndex = page,
+                        maxWidthPx = maxWidthPx,
+                        modifier = Modifier
+                            .width(96.dp)
+                            .heightIn(max = 132.dp)
+                            .background(Color.LightGray),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                }
+                Text(
+                    text = "Page ${page + 1}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+    }
+}
+
+@SuppressLint("ProduceStateDoesNotAssignValue")
+@Composable
+private fun PdfPageThumbnail(
+    handle: PdfDocumentHandle,
+    pageIndex: Int,
+    maxWidthPx: Int,
+    modifier: Modifier = Modifier,
+) {
+    val bitmap by produceState<Bitmap?>(initialValue = null, handle, pageIndex, maxWidthPx) {
+        value = withContext(Dispatchers.IO) {
+            handle.renderThumbnail(pageIndex, maxWidthPx)
+        }
+    }
+    DisposableEffect(bitmap) {
+        onDispose {
+            bitmap?.recycle()
+        }
+    }
+    bitmap?.let {
+        Image(
+            bitmap = it.asImageBitmap(),
+            contentDescription = "Page ${pageIndex + 1} thumbnail",
+            modifier = modifier,
+        )
+    } ?: Box(modifier = modifier)
 }
 
 @Composable

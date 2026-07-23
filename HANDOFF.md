@@ -1,11 +1,11 @@
 # FileViewer Android — Handoff
 
-Last updated: 2026-07-22 (Phase 3 complete)
+Last updated: 2026-07-23 (Phase 4 PDF core complete)
 Active repo (local): `/Users/patrickshi/KimiCoding/FileViewer`
 GitHub remote: `https://github.com/timetochilltoo/FileViewerAndroid.git`
 Git identity (already in Patrick's global git config): user `timetochilltoo`, email `152804118+timetochilltoo@users.noreply.github.com`
 Current branch: `main`
-Current committed baseline: see `git log -1` (Phase 1 commit)
+Current committed baseline: see `git log -1` (Phase 4 commit)
 
 > This document is the single source of truth for taking over the project. The **scope/plan** source of truth is `docs/android-requirements-and-plan.md` (v2). Where they conflict, the plan wins on scope and this file wins on environment/status.
 
@@ -101,7 +101,6 @@ All pins live in `gradle/libs.versions.toml`.
 app/src/main/java/com/timetochilltoo/fileviewer/
 ├── app/
 │   ├── MainActivity.kt          # single activity; routes VIEW/SEND/SEND_MULTIPLE via IntentRouter
-│   │                            #   onCreate (cold start only) + onNewIntent (singleTask)
 │   └── theme/Theme.kt           # FileViewerTheme: system light/dark M3
 ├── core/
 │   ├── model/
@@ -109,34 +108,44 @@ app/src/main/java/com/timetochilltoo/fileviewer/
 │   │   ├── MarkdownMode.kt      # PREVIEW | SOURCE | SPLIT
 │   │   ├── ViewerDocument.kt    # sealed: Markdown(uri?, text, savedText) | Pdf(uri, pageCount, handle)
 │   │   ├── DocumentTab.kt       # immutable per-tab state; hasUnsavedChanges computed (md: text != savedText)
-│   │   └── TabManager.kt        # PURE tab-list logic (add/select/update/remove/findByUri) — no Android deps, unit-tested
+│   │   ├── TabManager.kt        # PURE tab-list logic (add/select/update/remove/findByUri) — unit-tested
+│   │   ├── MarkdownFormatter.kt # Phase 3: toggle/wrap/format commands (UTF-16 safe), unit-tested
+│   │   ├── MarkdownOutline.kt   # heading parser + EditorSelection/HeadingJump data
+│   │   ├── PdfModel.kt          # PdfPageMetrics, PdfSearchResult, PdfOutlineItem
+│   │   └── PdfScaleMode.kt      # FIT_WIDTH | FIT_PAGE | FREE
 │   └── files/
-│       ├── DocumentRepository.kt # SAF: load(uri)->ViewerDocument, displayName, kindFor (ext-based), writeMarkdown
+│       ├── DocumentRepository.kt # SAF: load(uri)->ViewerDocument, displayName, kindFor, writeMarkdown
+│       ├── PdfDocumentHandle.kt # interface: render/search/text/outline/thumbnail + page cache contract
 │       ├── PdfHandle.kt         # PdfiumCore + ParcelFileDescriptor + PdfDocument; close() on tab close
 │       ├── RecentsStore.kt      # DataStore JSON list, dedupe by uri, cap 20
-│       ├── SessionStore.kt      # DataStore session tabs/selection + per-file scroll map; SessionCodec pure/tested
+│       ├── SessionStore.kt      # DataStore session + scroll + PDF state; SessionCodec pure/tested
 │       ├── RecentDocument.kt
 │       └── IntentRouter.kt      # Intent -> Ingress (OpenUris | SharedText | None), Robolectric-tested
 └── feature/
     ├── shell/
-    │   ├── AppViewModel.kt      # AndroidViewModel; ONE ShellUiState flow (tabs+selectedTabId) — see lesson 7.1
-    │   │                        # close-request, save/save-as, recents, markdownMode, session save/restore,
+    │   ├── AppViewModel.kt      # AndroidViewModel; ONE ShellUiState flow (tabs+selectedTabId)
+    │   │                        # close-request, save/save-as, recents, markdownMode, session/PDF-state save/restore,
     │   │                        # scroll positions, persistState() (called from MainActivity.onPause)
-    │   └── ShellScreen.kt       # TopAppBar+overflow menu, custom TabStrip (see lesson 7.1), StatusStrip,
-    │                            # EmptyState w/ recents, UnsavedCloseDialog, back-press chain
+    │   └── ShellScreen.kt       # TopAppBar+overflow menu, custom TabStrip, StatusStrip, EmptyState w/ recents,
+    │                            # UnsavedCloseDialog, back-press chain, drawer (MD headings / PDF outline+thumbnails)
     ├── markdown/
     │   ├── MarkdownWorkspace.kt      # mode selector + SOURCE/PREVIEW/SPLIT layout (Split only ≥840dp); key(tab.id)
-    │   ├── MarkdownSourceEditor.kt   # BasicTextField(TextFieldValue), monospace, no autocorrect;
-    │   │                             # external text changes sync with clamped cursor (Phase 3 formatting path)
-    │   └── MarkdownPreview.kt        # Markwon (tables/tasklist/strikethrough) in ScrollView AndroidView;
-    │                             # 150ms debounce, scroll reporting + initial scroll restore
-    └── pdf/PdfWorkspace.kt             # placeholder: name + page count (Phase 4 builds the viewer)
+    │   ├── MarkdownSourceEditor.kt   # BasicTextField(TextFieldValue), monospace, no autocorrect
+    │   ├── MarkdownPreview.kt        # Markwon (tables/tasklist/strikethrough) in ScrollView AndroidView; 150ms debounce
+    │   ├── FormattingToolbar.kt      # Phase 3: Format dropdown + icon buttons
+    │   └── MarkdownGuideScreen.kt    # Phase 3: static syntax guide
+    └── pdf/
+        ├── PdfWorkspace.kt           # continuous scroll LazyColumn, page nav, zoom +/-, fit width/page, reading mode
+        ├── PdfPageView.kt            # single page bitmap + search-highlight canvas overlay
+        └── PdfPrintAdapter.kt        # system PrintDocumentAdapter that streams the PDF bytes
 app/src/androidTest/
 ├── assets/fixture_hello.pdf     # generated 1-page PDF
 └── java/.../feature/pdf/PdfAnnotationSpikeTest.kt   # 3 passing spike tests (Phase 0)
 app/src/test/
-├── core/model/TabManagerTest.kt     # 9 tests: duplicate guard, selection fixup, dirty logic
-└── core/files/IntentRouterTest.kt   # 5 tests: VIEW/SEND/SEND_MULTIPLE routing (Robolectric)
+├── core/model/TabManagerTest.kt        # 9 tests: duplicate guard, selection fixup, dirty logic
+├── core/model/MarkdownFormatterTest.kt # Phase 3 formatter toggles, tables, task lists, CJK
+├── core/model/MarkdownOutlineTest.kt   # heading parsing
+└── core/files/SessionCodecTest.kt      # session/scroll/PDF-state codecs (Robolectric)
 ```
 
 - Manifest: single `MainActivity` (`singleTask`, configChanges handled), intent filters for PDF (`application/pdf`), Markdown (`text/markdown`, `text/plain`), extension-based `*/*` filters with `pathPattern` for `.md`/`.markdown`/`.pdf`, VIEW+SEND.
@@ -189,17 +198,9 @@ Scoped storage (API 30+) blocks raw-path reads via `file://` even with correct p
 
 **Phase 3** — `MarkdownFormatter` (bold/italic/underline-HTML/heading/bullet/numbered/quote/link/code/table/task-list), formatting toolbar (Format dropdown + icon buttons, underline labeled “HTML underline”), search with preview span highlight (yellow/orange), counter, prev/next, Navigate panel with Markdown heading list, and a Markdown Syntax Guide screen. 21 unit tests added (formatter toggles + outline). Smoke-verified: heading underline in preview removed via `MarkwonTheme.Builder.headingBreakHeight(0)`; toolbar, search, drawer, and guide all work on device.
 
-**Next: Phase 4 — PDF viewer core (2 wks)** per plan §5:
+**Phase 4** — PDF viewer core (complete): Pdfium behind `PdfDocumentHandle` (render/search/text/outline/thumbnail, 4-page LRU cache), Compose `LazyColumn` continuous-scroll `PdfWorkspace`, page nav + go-to-page field, zoom +/- and fit-width/fit-page modes, text-reflow reading mode (PDF-4), PDF search with highlight overlay and counter (PDF-7), drawer with outline + lazy 96dp page thumbnails (PDF-5/6), print via `PdfPrintAdapter` (PDF-9), and per-file page/zoom persistence (PDF state merged on tab close and `persistState()`). Fixed a print crash caused by using the Application context instead of the Activity for `PrintManager`.
 
-1. Pdfium integration behind `PdfDocumentHandle` (page count, render at scale, page size, text extraction).
-2. `PdfViewerView`: continuous vertical scroll, fling, pinch/double-tap zoom, page-change callback; wrapped in `AndroidView`.
-3. Guard rails: clamped page callbacks, ignore `-1`, stale-document checks.
-4. Toolbar: page nav, go-to-page, zoom in/out, fit width/page.
-5. Text reflow / reading mode (PDF-4): extract text per page, render as resizable Compose text.
-6. Per-file page/zoom persistence.
-7. Navigate panel: thumbnails (lazy 96dp renders) + outline when available.
-8. Search: Pdfium `findAll`, highlight rects overlay, event-driven navigation, counter “PDF: n of N”.
-9. Print PDF (PDF-9).
+**Next:** Phase 7 polish (performance, dark theme pass, signed release APK) and optional Phases 5–6 (PDF annotations). Known gap: pinch-to-zoom and double-tap zoom gestures are not yet wired (zoom buttons and fit modes work); plan labels them P0 for Phase 4, so treat as a fast-follow item.
 
 Then Phase 7 (polish). Phases 5–6 (annotations) remain optional — spike green-lit.
 

@@ -1,6 +1,10 @@
 package com.timetochilltoo.fileviewer.feature.shell
 
+import android.app.Activity
 import android.app.Application
+import android.content.Context
+import android.print.PrintAttributes
+import android.print.PrintManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.timetochilltoo.fileviewer.core.files.DocumentRepository
@@ -15,14 +19,18 @@ import com.timetochilltoo.fileviewer.core.model.HeadingJump
 import com.timetochilltoo.fileviewer.core.model.MarkdownFormatCommand
 import com.timetochilltoo.fileviewer.core.model.MarkdownFormatter
 import com.timetochilltoo.fileviewer.core.model.MarkdownMode
+import com.timetochilltoo.fileviewer.core.model.PdfScaleMode
 import com.timetochilltoo.fileviewer.core.model.TabManager
 import com.timetochilltoo.fileviewer.core.model.ViewerDocument
+import com.timetochilltoo.fileviewer.feature.pdf.PdfPrintAdapter
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -33,6 +41,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private var sessionRestoreEnabled = true
     private val scrollPositions = mutableMapOf<String, Int>()
+    private val pdfStates = mutableMapOf<String, SessionCodec.PdfState>()
 
     data class ShellUiState(
         val tabs: List<DocumentTab> = emptyList(),
@@ -58,6 +67,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _headingJump = MutableStateFlow<HeadingJump?>(null)
     val headingJump: StateFlow<HeadingJump?> = _headingJump.asStateFlow()
 
+    private val _pdfPageJump = MutableStateFlow<Pair<String, Int>?>(null)
+    val pdfPageJump: StateFlow<Pair<String, Int>?> = _pdfPageJump.asStateFlow()
+
     private val editorSelections = mutableMapOf<String, Pair<Int, Int>>()
 
     val recents: StateFlow<List<RecentDocument>> = recentsStore.recents
@@ -69,6 +81,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     init {
         viewModelScope.launch {
             scrollPositions.putAll(sessionStore.loadScroll())
+            pdfStates.putAll(sessionStore.loadPdfState())
             if (sessionRestoreEnabled) {
                 restoreSession()
             }
@@ -87,12 +100,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val session = sessionStore.load()
         session.tabs.forEach { entry ->
             repository.load(entry.uri)?.let { document ->
-                tabManager.add(
-                    DocumentTab(
-                        document = document,
-                        markdownScrollY = scrollPositions[entry.uri] ?: 0,
-                    ),
+                val base = DocumentTab(
+                    document = document,
+                    markdownScrollY = scrollPositions[entry.uri] ?: 0,
                 )
+                tabManager.add(base.withPdfState(entry.uri))
             }
         }
         session.selectedUri?.let { uri ->
@@ -115,6 +127,30 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         },
         selectedUri = tabManager.selected?.document?.uri,
     )
+
+    private fun DocumentTab.withPdfState(uri: String): DocumentTab {
+        val state = pdfStates[uri] ?: return this
+        val pdf = document as? ViewerDocument.Pdf ?: return this
+        return copy(
+            pdfPage = state.page.coerceIn(0, pdf.pageCount - 1),
+            pdfScale = state.scale.coerceAtLeast(0.1f),
+            pdfScaleMode = state.mode,
+        )
+    }
+
+    private fun updatePdfStatesFromTabs() {
+        tabManager.tabs.forEach { tab ->
+            tab.document.uri?.let { uri ->
+                (tab.document as? ViewerDocument.Pdf)?.let { pdf ->
+                    pdfStates[uri] = SessionCodec.PdfState(
+                        page = tab.pdfPage.coerceIn(0, pdf.pageCount - 1),
+                        scale = tab.pdfScale.coerceAtLeast(0.1f),
+                        mode = tab.pdfScaleMode,
+                    )
+                }
+            }
+        }
+    }
 
     private fun scheduleSessionSave() {
         viewModelScope.launch { sessionStore.save(sessionSnapshot()) }
@@ -147,18 +183,50 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSearchText(tabId: String, query: String) {
         val tab = tabManager.findById(tabId) ?: return
-        val count = when (val doc = tab.document) {
-            is ViewerDocument.Markdown -> countOccurrences(doc.text, query)
-            is ViewerDocument.Pdf -> 0
+        val trimmed = query.trim()
+        when (val doc = tab.document) {
+            is ViewerDocument.Markdown -> {
+                val occurrences = countOccurrences(doc.text, trimmed)
+                tabManager.update(
+                    tab.copy(
+                        searchText = query,
+                        searchMatchCount = occurrences,
+                        searchMatchIndex = if (occurrences > 0) 0 else -1,
+                    ),
+                )
+                pushState()
+            }
+            is ViewerDocument.Pdf -> {
+                tabManager.update(
+                    tab.copy(
+                        searchText = query,
+                        searchMatchCount = 0,
+                        searchMatchIndex = -1,
+                        pdfSearchResults = emptyList(),
+                    ),
+                )
+                pushState()
+                val handle = doc.handle ?: return
+                if (trimmed.isBlank()) return
+                viewModelScope.launch(Dispatchers.IO) {
+                    val results = handle.search(trimmed)
+                    withContext(Dispatchers.Main) {
+                        val current = tabManager.findById(tabId) ?: return@withContext
+                        if (current.searchText != query) return@withContext
+                        tabManager.update(
+                            current.copy(
+                                searchMatchCount = results.size,
+                                searchMatchIndex = if (results.isNotEmpty()) 0 else -1,
+                                pdfSearchResults = results,
+                                pdfPage = results.firstOrNull()?.pageIndex ?: current.pdfPage,
+                            ),
+                        )
+                        pushState()
+                        results.firstOrNull()?.let { _pdfPageJump.value = tabId to it.pageIndex }
+                    }
+                }
+            }
         }
-        tabManager.update(
-            tab.copy(
-                searchText = query,
-                searchMatchCount = count,
-                searchMatchIndex = if (count > 0) 0 else -1,
-            ),
-        )
-        pushState()
     }
 
     fun nextSearchMatch(tabId: String) = stepSearchMatch(tabId, +1)
@@ -172,8 +240,86 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             tab.searchMatchIndex + delta,
             tab.searchMatchCount,
         )
-        tabManager.update(tab.copy(searchMatchIndex = next))
+        val result = tab.pdfSearchResults.getOrNull(next)
+        tabManager.update(tab.copy(searchMatchIndex = next, pdfPage = result?.pageIndex ?: tab.pdfPage))
         pushState()
+        result?.let { _pdfPageJump.value = tabId to it.pageIndex }
+    }
+
+    fun setPdfPage(tabId: String, page: Int) {
+        val tab = tabManager.findById(tabId) ?: return
+        val clamped = page.coerceIn(0, (tab.document as? ViewerDocument.Pdf)?.pageCount?.minus(1) ?: 0)
+        tabManager.update(tab.copy(pdfPage = clamped))
+        tab.document.uri?.let { uri ->
+            pdfStates[uri] = SessionCodec.PdfState(
+                page = clamped,
+                scale = tab.pdfScale.coerceAtLeast(0.1f),
+                mode = tab.pdfScaleMode,
+            )
+        }
+        pushState()
+    }
+
+    fun goToPdfPage(tabId: String, page: Int) {
+        setPdfPage(tabId, page)
+        _pdfPageJump.value = tabId to page
+    }
+
+    fun setPdfScale(tabId: String, scale: Float) {
+        val tab = tabManager.findById(tabId) ?: return
+        if (tab.document !is ViewerDocument.Pdf) return
+        val clamped = scale.coerceAtLeast(0.1f)
+        tabManager.update(
+            tab.copy(
+                pdfScale = clamped,
+                pdfScaleMode = PdfScaleMode.FREE,
+            ),
+        )
+        tab.document.uri?.let { uri ->
+            pdfStates[uri] = SessionCodec.PdfState(
+                page = tab.pdfPage,
+                scale = clamped,
+                mode = PdfScaleMode.FREE,
+            )
+        }
+        pushState()
+    }
+
+    fun setPdfScaleMode(tabId: String, mode: PdfScaleMode) {
+        val tab = tabManager.findById(tabId) ?: return
+        if (tab.document !is ViewerDocument.Pdf) return
+        tabManager.update(tab.copy(pdfScaleMode = mode))
+        tab.document.uri?.let { uri ->
+            pdfStates[uri] = SessionCodec.PdfState(
+                page = tab.pdfPage,
+                scale = tab.pdfScale.coerceAtLeast(0.1f),
+                mode = mode,
+            )
+        }
+        pushState()
+    }
+
+    fun setPdfReadingMode(tabId: String, enabled: Boolean) {
+        val tab = tabManager.findById(tabId) ?: return
+        val pdf = tab.document as? ViewerDocument.Pdf ?: return
+        tabManager.update(tab.copy(pdfReadingMode = enabled))
+        pushState()
+        if (enabled && pdf.handle != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val text = buildString {
+                    for (i in 0 until pdf.pageCount) {
+                        appendLine("— Page ${i + 1} —")
+                        appendLine(pdf.handle.extractText(i))
+                        appendLine()
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    val current = tabManager.findById(tabId) ?: return@withContext
+                    tabManager.update(current.copy(pdfReflowText = text))
+                    pushState()
+                }
+            }
+        }
     }
 
     private fun countOccurrences(haystack: String, needle: String): Int {
@@ -193,10 +339,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _markdownMode.value = MarkdownMode.PREVIEW
     }
 
+    fun consumePdfPageJump() {
+        _pdfPageJump.value = null
+    }
+
     fun persistState() {
         viewModelScope.launch {
+            updatePdfStatesFromTabs()
             sessionStore.save(sessionSnapshot())
             sessionStore.saveScrollMerged(scrollPositions)
+            sessionStore.savePdfStateMerged(pdfStates)
         }
     }
 
@@ -225,7 +377,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             DocumentTab(
                 document = document,
                 markdownScrollY = scrollPositions[uri] ?: 0,
-            ),
+            ).withPdfState(uri),
         )
         pushState()
         scheduleSessionSave()
@@ -282,6 +434,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         (removed?.document as? ViewerDocument.Pdf)?.handle?.close()
         pushState()
         scheduleSessionSave()
+        viewModelScope.launch { sessionStore.savePdfStateMerged(pdfStates) }
     }
 
     fun updateMarkdownText(tabId: String, text: String) {
@@ -328,6 +481,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _statusMessage.value = "Saved"
         viewModelScope.launch { recentsStore.add(uri, name) }
         scheduleSessionSave()
+        return true
+    }
+
+    fun printPdf(tabId: String, activity: Activity): Boolean {
+        val tab = tabManager.findById(tabId) ?: return false
+        val pdf = tab.document as? ViewerDocument.Pdf ?: return false
+        val manager = activity
+            .getSystemService(Context.PRINT_SERVICE) as? PrintManager ?: return false
+        val adapter = PdfPrintAdapter(activity.applicationContext, pdf.uri)
+        manager.print(pdf.displayName, adapter, PrintAttributes.Builder().build())
+        _statusMessage.value = "Printing…"
         return true
     }
 }

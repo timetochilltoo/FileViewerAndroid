@@ -10,8 +10,12 @@ data class DocumentTab(
     val searchMatchCount: Int = 0,
     val pdfPage: Int = 0,
     val pdfScale: Float = 1f,
+    val pdfScaleMode: PdfScaleMode = PdfScaleMode.FIT_WIDTH,
+    val pdfReadingMode: Boolean = false,
     val markdownScrollY: Int = 0,
     val pdfDirty: Boolean = false,
+    val pdfSearchResults: List<PdfSearchResult> = emptyList(),
+    val pdfReflowText: String = "",
 ) {
     val hasUnsavedChanges: Boolean
         get() = when (val doc = document) {

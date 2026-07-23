@@ -1,6 +1,6 @@
 # FileViewer Android — Requirements & Development Plan
 
-Last updated: 2026-07-22 (v3 — Phase 3 done)
+Last updated: 2026-07-23 (v4 — Phase 4 done)
 Reference: macOS FileViewer `HANDOFF.md` (baseline `834c986`)
 Scope: Android port of the macOS FileViewer for Markdown + PDF. **AI assistant is explicitly out of scope.** Personal-use app (not Play Store); distributed by sideloaded APK.
 
@@ -191,17 +191,19 @@ Core app (Phases 0–4, 7): ~7–8 weeks at one developer. Annotation phases (5�
 
 **Deliverable:** source-editor formatting parity with macOS.
 
-### Phase 4 — PDF viewer core (2 wks)
+### Phase 4 — PDF viewer core (2 wks) — **done 2026-07-23**
 
-1. Pdfium integration behind a `PdfDocumentHandle` interface (page count, render at scale, page size, text extraction).
-2. `PdfViewerView`: continuous vertical scroll, fling, pinch/double-tap zoom, page-change callback; wrapped in `AndroidView`.
-3. Guard rails: page callbacks clamped, `-1` ignored, document-identity check before state writes (PDF-8).
-4. Toolbar: page nav, go-to-page dialog, zoom in/out, fit width/page.
-5. Text reflow / reading mode (PDF-4): extract page text via Pdfium, render as selectable, resizable Compose text; per-page or continuous mode.
-6. Per-file page/zoom persistence (saved on natural save points — tab switch/close/pause, not per-scroll-pixel).
-7. Navigate panel for PDF: thumbnails (lazy 96dp renders) + outline (PDF-5/6).
-8. Search: Pdfium `findAll`, highlight rects overlay; navigation strictly event-driven (request-ID pattern from the macOS fix) so redraws never re-jump; counter "PDF: n of N" (PDF-7).
-9. Print PDF (PDF-9).
+1. Pdfium integration behind a `PdfDocumentHandle` interface (page count, render at scale, page size, text extraction). ✅
+2. PDF workspace: continuous vertical scroll, page-change callback. ✅ (Compose `LazyColumn`, not `AndroidView`.)
+3. Guard rails: page callbacks clamped, `-1` ignored, document-identity check before state writes (PDF-8). ✅
+4. Toolbar: page nav, go-to-page field, zoom in/out, fit width/page. ✅
+5. Text reflow / reading mode (PDF-4): whole-document text extraction, resizable Compose text. ✅
+6. Per-file page/zoom persistence (saved on tab close and `persistState()`). ✅
+7. Navigate panel for PDF: thumbnails (lazy 96dp renders) + outline (PDF-5/6). ✅
+8. Search: Pdfium `findAll`, highlight rects overlay; event-driven navigation; counter "PDF: n of N" (PDF-7). ✅
+9. Print PDF (PDF-9). ✅
+
+**Gap:** pinch-to-zoom and double-tap zoom gestures are not yet wired (zoom buttons/fit modes work); treat as Phase 7 polish.
 
 **Tests:** page-guard unit tests, search count on fixture PDFs, reflow extraction, state persistence.
 

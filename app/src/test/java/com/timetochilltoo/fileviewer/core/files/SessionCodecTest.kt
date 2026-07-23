@@ -1,6 +1,7 @@
 package com.timetochilltoo.fileviewer.core.files
 
 import com.timetochilltoo.fileviewer.core.model.DocumentKind
+import com.timetochilltoo.fileviewer.core.model.PdfScaleMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -70,5 +71,26 @@ class SessionCodecTest {
     fun `malformed scroll json decodes to empty map`() {
         assertTrue(SessionCodec.decodeScroll("oops").isEmpty())
         assertTrue(SessionCodec.decodeScroll(null).isEmpty())
+    }
+
+    @Test
+    fun `pdf state map round trip preserves page scale and mode`() {
+        val map = mapOf(
+            "content://a/report.pdf" to SessionCodec.PdfState(4, 1.5f, PdfScaleMode.FREE),
+            "content://b/book.pdf" to SessionCodec.PdfState(0, 1.0f, PdfScaleMode.FIT_WIDTH),
+        )
+
+        val decoded = SessionCodec.decodePdfState(SessionCodec.encodePdfState(map))
+
+        assertEquals(map, decoded)
+    }
+
+    @Test
+    fun `pdf state with invalid mode falls back to fit width`() {
+        val json = """{"content://a.pdf":{"page":2,"scale":1.25,"mode":"ZOOM_400"}}"""
+        val decoded = SessionCodec.decodePdfState(json)
+        assertEquals(2, decoded["content://a.pdf"]?.page)
+        assertEquals(1.25f, decoded["content://a.pdf"]?.scale)
+        assertEquals(PdfScaleMode.FIT_WIDTH, decoded["content://a.pdf"]?.mode)
     }
 }
