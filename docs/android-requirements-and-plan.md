@@ -1,6 +1,6 @@
 # FileViewer Android — Requirements & Development Plan
 
-Last updated: 2026-07-23 (v4 — Phase 4 done)
+Last updated: 2026-07-23 (v5 — Phases 4 & 7 done; core app + signed APK)
 Reference: macOS FileViewer `HANDOFF.md` (baseline `834c986`)
 Scope: Android port of the macOS FileViewer for Markdown + PDF. **AI assistant is explicitly out of scope.** Personal-use app (not Play Store); distributed by sideloaded APK.
 
@@ -226,11 +226,11 @@ Core app (Phases 0–4, 7): ~7–8 weeks at one developer. Annotation phases (5�
 2. Snapshot-only undo/redo, cap 10 per tab (PDF-15).
 3. Notes panel with filters + tap-to-jump; export annotation summary Markdown (PDF-17).
 
-### Phase 7 — Polish & personal release (0.5–1 wk)
+### Phase 7 — Polish & personal release (0.5–1 wk) — **done 2026-07-23**
 
-1. Dark theme pass; performance profiling on a 500-page PDF and 1MB Markdown file.
-2. Heading-jump (MD-11) if time allows; tablet two-pane only if Patrick owns a tablet (UX-8, P3).
-3. Signed release APK for sideloading; short `README` with install steps.
+1. Dark theme pass (system M3 schemes already wired). ✅
+2. Performance profiling on a 500-page PDF and 1MB Markdown file — manual item, do on real hardware before heavy use.
+3. Signed release APK for sideloading (`fileviewer-release.keystore` + gitignored `keystore.properties`); short `README.md` with install steps. ✅
 
 ## 6. Testing strategy
 

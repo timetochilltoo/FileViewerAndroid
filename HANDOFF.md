@@ -1,6 +1,6 @@
 # FileViewer Android — Handoff
 
-Last updated: 2026-07-23 (Phase 4 PDF core complete)
+Last updated: 2026-07-23 (Phase 7 done — signed release APK ready)
 Active repo (local): `/Users/patrickshi/KimiCoding/FileViewer`
 GitHub remote: `https://github.com/timetochilltoo/FileViewerAndroid.git`
 Git identity (already in Patrick's global git config): user `timetochilltoo`, email `152804118+timetochilltoo@users.noreply.github.com`
@@ -200,7 +200,9 @@ Scoped storage (API 30+) blocks raw-path reads via `file://` even with correct p
 
 **Phase 4** — PDF viewer core (complete): Pdfium behind `PdfDocumentHandle` (render/search/text/outline/thumbnail, 4-page LRU cache), Compose `LazyColumn` continuous-scroll `PdfWorkspace`, pinch-to-zoom + double-tap zoom (toggle fit-width ↔ 2×), page nav + go-to-page field, zoom +/- and fit-width/fit-page modes, text-reflow reading mode (PDF-4), PDF search with highlight overlay and counter (PDF-7), drawer with outline + lazy 96dp page thumbnails (PDF-5/6), print via `PdfPrintAdapter` (PDF-9), and per-file page/zoom persistence (PDF state merged on tab close and `persistState()`). Fixed a print crash caused by using the Application context instead of the Activity for `PrintManager`.
 
-**Next:** Phase 7 polish (performance, dark theme pass, signed release APK) and optional Phases 5–6 (PDF annotations).
+**Phase 7** — release polish: dark/light system theme confirmed (M3 default schemes), release signing configured (`signingConfigs.release` in `app/build.gradle.kts`, reads gitignored `keystore.properties` + `fileviewer-release.keystore` in repo root), signed release APK verified with `apksigner` (33M, cert `CN=FileViewer`), `README.md` with build/sideload steps, version bumped to `0.2.0` (versionCode 2). **Keystore + passwords are NOT committed; back them up — losing them blocks future in-place updates.** Remaining manual item: performance pass on a 500-page PDF / 1MB Markdown on real hardware.
+
+**Next:** optional Phases 5–6 (PDF annotations) — spike green-lit; core app ships without them.
 
 Then Phase 7 (polish). Phases 5–6 (annotations) remain optional — spike green-lit.
 
