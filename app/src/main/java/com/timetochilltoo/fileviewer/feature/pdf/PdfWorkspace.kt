@@ -1,6 +1,8 @@
 package com.timetochilltoo.fileviewer.feature.pdf
 
 import android.annotation.SuppressLint
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -120,35 +123,72 @@ fun PdfWorkspace(
             onPageChange = { onPageChange((it - 1).coerceIn(0, pdf.pageCount - 1)) },
             onPrevious = { onPageChange((tab.pdfPage - 1).coerceIn(0, pdf.pageCount - 1)) },
             onNext = { onPageChange((tab.pdfPage + 1).coerceIn(0, pdf.pageCount - 1)) },
-            onZoomIn = { scale = (scale * 1.25f).coerceAtLeast(0.1f); onScaleChange(scale) },
-            onZoomOut = { scale = (scale / 1.25f).coerceAtLeast(0.1f); onScaleChange(scale) },
+            onZoomIn = {
+                scale = (scale * 1.25f).coerceIn(0.1f, fitWidthScale * 5f)
+                onScaleChange(scale)
+            },
+            onZoomOut = {
+                scale = (scale / 1.25f).coerceIn(0.1f, fitWidthScale * 5f)
+                onScaleChange(scale)
+            },
         )
 
         if (tab.pdfReadingMode) {
             PdfReadingMode(text = tab.pdfReflowText, modifier = Modifier.fillMaxSize())
         } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(
-                    count = pdf.pageCount,
-                    key = { it },
-                ) { pageIndex ->
-                    val currentMatch = if (tab.searchMatchIndex in tab.pdfSearchResults.indices) {
-                        tab.pdfSearchResults[tab.searchMatchIndex]
-                    } else {
-                        null
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, _, zoom, _ ->
+                            if (zoom != 1f) {
+                                scale = (scale * zoom).coerceIn(0.1f, fitWidthScale * 5f)
+                                onScaleChange(scale)
+                            }
+                        }
                     }
-                    PdfPageView(
-                        handle = handle,
-                        pageIndex = pageIndex,
-                        scale = scale,
-                        searchResults = tab.pdfSearchResults.filter { it.pageIndex == pageIndex },
-                        currentMatch = if (currentMatch?.pageIndex == pageIndex) currentMatch else null,
-                    )
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onDoubleTap = {
+                                val target = if (scale > fitWidthScale * 1.2f) {
+                                    fitWidthScale
+                                } else {
+                                    fitWidthScale * 2f
+                                }
+                                if (target == fitWidthScale) {
+                                    scale = fitWidthScale
+                                    onScaleModeChange(PdfScaleMode.FIT_WIDTH)
+                                } else {
+                                    scale = target
+                                    onScaleChange(scale)
+                                }
+                            },
+                        )
+                    },
+            ) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(
+                        count = pdf.pageCount,
+                        key = { it },
+                    ) { pageIndex ->
+                        val currentMatch = if (tab.searchMatchIndex in tab.pdfSearchResults.indices) {
+                            tab.pdfSearchResults[tab.searchMatchIndex]
+                        } else {
+                            null
+                        }
+                        PdfPageView(
+                            handle = handle,
+                            pageIndex = pageIndex,
+                            scale = scale,
+                            searchResults = tab.pdfSearchResults.filter { it.pageIndex == pageIndex },
+                            currentMatch = if (currentMatch?.pageIndex == pageIndex) currentMatch else null,
+                        )
+                    }
                 }
             }
         }
