@@ -188,6 +188,11 @@ Scoped storage (API 30+) blocks raw-path reads via `file://` even with correct p
 - Untitled tabs are never written to the session (by design).
 - Untitled-save bug (0-byte file from overflow menu): fixed by `PendingSaveAs(tabId, closeAfter)` covering both menu-Save and close-dialog Save paths through the one CreateDocument result callback.
 
+### 7.4 Phase 4 lessons
+
+- **Recycled-bitmap crash (PDF opened → instant quit).** `PdfPageView` called `bitmap?.recycle()` right before swapping in a newly rendered bitmap; the frame still being drawn referenced the old bitmap → `RuntimeException: Canvas: trying to use a recycled bitmap`. It fired on every open because scale starts at a placeholder (1.0) then snaps to real fit-width, forcing an immediate re-render. Fix: never eagerly recycle bitmaps that Compose may still be drawing — let GC reclaim them (page bitmaps are only held while the page is composed in the LazyColumn). Same fix applied to drawer thumbnails.
+- **Release vs debug on the same device/emulator** have different signatures: `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Uninstall first (`adb uninstall com.timetochilltoo.fileviewer`) before switching builds. Also `run-as` doesn't work on the release APK (not debuggable).
+
 ## 8. Status & what's next
 
 **Done:**

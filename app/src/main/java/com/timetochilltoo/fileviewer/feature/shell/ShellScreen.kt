@@ -59,7 +59,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -548,11 +547,6 @@ private fun PdfPageThumbnail(
     val bitmap by produceState<Bitmap?>(initialValue = null, handle, pageIndex, maxWidthPx) {
         value = withContext(Dispatchers.IO) {
             handle.renderThumbnail(pageIndex, maxWidthPx)
-        }
-    }
-    DisposableEffect(bitmap) {
-        onDispose {
-            bitmap?.recycle()
         }
     }
     bitmap?.let {

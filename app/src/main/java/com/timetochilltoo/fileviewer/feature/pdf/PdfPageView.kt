@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,17 +63,12 @@ fun PdfPageView(
 
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    DisposableEffect(pageIndex) {
-        onDispose { bitmap?.recycle() }
-    }
-
     LaunchedEffect(handle, pageIndex, scale) {
         val newBitmap = Bitmap.createBitmap(pageWidthPx, pageHeightPx, Bitmap.Config.ARGB_8888)
         val success = withContext(Dispatchers.IO) {
             handle.renderPage(pageIndex, newBitmap, pageWidthPx, pageHeightPx)
         }
         if (success) {
-            bitmap?.recycle()
             bitmap = newBitmap
         } else {
             newBitmap.recycle()
