@@ -59,6 +59,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -70,6 +71,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -136,8 +139,9 @@ fun ShellScreen(viewModel: AppViewModel) {
         scope.launch { drawerState.close() }
     }
     BackHandler(enabled = !drawerState.isOpen && tabs.isNotEmpty()) {
-        if (searchVisible && selectedTab?.searchText?.isNotBlank() == true) {
-            viewModel.setSearchText(selectedTab.id, "")
+        if (searchVisible) {
+            selectedTab?.let { viewModel.setSearchText(it.id, "") }
+            searchVisible = false
         } else {
             viewModel.requestCloseSelectedTab()
         }
@@ -566,6 +570,8 @@ private fun SearchBar(
     onPrevious: () -> Unit,
     onClose: () -> Unit,
 ) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -579,7 +585,9 @@ private fun SearchBar(
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { onNext() }),
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .focusRequester(focusRequester),
         )
         if (tab.searchText.isNotBlank()) {
             Text(

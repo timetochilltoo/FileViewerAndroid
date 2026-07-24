@@ -47,11 +47,6 @@ fun MarkdownSourceEditor(
         }
     }
 
-    if (fieldValue.text != text) {
-        val clampedCursor = fieldValue.selection.start.coerceAtMost(text.length)
-        fieldValue = TextFieldValue(text, selection = TextRange(clampedCursor))
-    }
-
     BasicTextField(
         value = fieldValue,
         onValueChange = { newValue ->

@@ -194,6 +194,18 @@ Scoped storage (API 30+) blocks raw-path reads via `file://` even with correct p
 - **Release vs debug on the same device/emulator** have different signatures: `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Uninstall first (`adb uninstall com.timetochilltoo.fileviewer`) before switching builds. Also `run-as` doesn't work on the release APK (not debuggable).
 - **Zoom UX:** pinch zoom is a custom `awaitEachGesture` handler that ignores single-finger gestures (so LazyColumn scroll still works) and commits `onScaleChange` only when the pinch ends (avoids per-frame ViewModel churn + bitmap re-renders). Pages wider than the viewport (scale > fit-width) are wrapped in a `horizontalScroll` Row so single-finger horizontal drag pans the page; vertical drag still scrolls pages. Pinch does NOT zoom around the centroid and double-tap does NOT center on the tapped point — acceptable for personal use, revisit if annoying.
 
+### 7.5 Review pass fixes (2026-07-24)
+
+1. **FD leak** — `loadPdf` now closes the `ParcelFileDescriptor` if `newDocument` throws.
+2. **Main-thread I/O** — `openUri`/`restoreSession` load documents on `Dispatchers.IO` (was blocking UI on large files).
+3. **PDF search churn** — per-tab search jobs with 250ms debounce; stale-query guard kept.
+4. **Handle leak** — `AppViewModel.onCleared` closes all open `PdfHandle`s.
+5. **Editor cursor race** — removed the composition-phase state write in `MarkdownSourceEditor` (could eat a typed char if recomposition raced the ViewModel update); external changes flow only through `selectionOverride`.
+6. **Preview re-parse** — `MarkdownPreview` only calls `markwon.setMarkdown` when the debounced text actually changes (search stepping no longer re-parses the document).
+7. **Large-PDF open cost** — `PdfWorkspace` no longer opens every page (+text page) to compute fit scale; it uses page 0 metrics (uniform-size assumption; mixed-size PDFs may fit imperfectly).
+8. **Pinch smoothness** — render scale vs visual scale split: bitmaps render at committed scale, pinch stretches via `graphicsLayer`, re-render happens once at gesture end.
+9. **Search UX** — search field auto-focuses when the bar opens; back press now closes the search bar before closing a tab.
+
 ## 8. Status & what's next
 
 **Done:**

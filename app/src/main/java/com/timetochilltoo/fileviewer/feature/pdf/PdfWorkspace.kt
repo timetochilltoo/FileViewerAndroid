@@ -72,24 +72,18 @@ fun PdfWorkspace(
     val pdf = tab.document as? ViewerDocument.Pdf ?: return
     val handle = pdf.handle ?: return
 
-    val metricsList by produceState<List<PdfPageMetrics?>>(
-        initialValue = emptyList(),
+    val firstPageMetrics by produceState<PdfPageMetrics?>(
+        initialValue = null,
         key1 = handle,
     ) {
-        value = withContext(Dispatchers.IO) {
-            List(pdf.pageCount) { index -> handle.pageMetrics(index) }
-        }
+        value = withContext(Dispatchers.IO) { handle.pageMetrics(0) }
     }
 
-    val maxWidthPoints = remember(metricsList) {
-        metricsList.maxOfOrNull { it?.widthPoints ?: 0 } ?: 0
-    }
-    val maxHeightPoints = remember(metricsList) {
-        metricsList.maxOfOrNull { it?.heightPoints ?: 0 } ?: 0
-    }
-    val fitWidthScale = if (maxWidthPoints > 0) viewportWidth / maxWidthPoints.toFloat() else 1f
-    val fitPageScale = if (maxWidthPoints > 0 && maxHeightPoints > 0) {
-        kotlin.math.min(viewportWidth / maxWidthPoints.toFloat(), viewportHeight / maxHeightPoints.toFloat())
+    val pageWidthPoints = firstPageMetrics?.widthPoints ?: 0
+    val pageHeightPoints = firstPageMetrics?.heightPoints ?: 0
+    val fitWidthScale = if (pageWidthPoints > 0) viewportWidth / pageWidthPoints.toFloat() else 1f
+    val fitPageScale = if (pageWidthPoints > 0 && pageHeightPoints > 0) {
+        kotlin.math.min(viewportWidth / pageWidthPoints.toFloat(), viewportHeight / pageHeightPoints.toFloat())
     } else {
         1f
     }
@@ -101,8 +95,10 @@ fun PdfWorkspace(
     }.coerceAtLeast(0.1f)
 
     var scale by remember { mutableStateOf(targetScale) }
+    var renderScale by remember { mutableStateOf(targetScale) }
     LaunchedEffect(targetScale) {
         scale = targetScale
+        renderScale = targetScale
     }
 
     val listState = rememberLazyListState()
@@ -214,7 +210,8 @@ fun PdfWorkspace(
                             PdfPageView(
                                 handle = handle,
                                 pageIndex = pageIndex,
-                                scale = scale,
+                                scale = renderScale,
+                                zoomFactor = if (renderScale > 0f) scale / renderScale else 1f,
                                 searchResults = tab.pdfSearchResults.filter { it.pageIndex == pageIndex },
                                 currentMatch = if (currentMatch?.pageIndex == pageIndex) currentMatch else null,
                             )

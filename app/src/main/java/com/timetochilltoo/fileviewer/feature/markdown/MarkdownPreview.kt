@@ -81,7 +81,10 @@ fun MarkdownPreview(
         update = { scrollView ->
             val textView = scrollView.getChildAt(0) as TextView
             textView.setTextColor(textColor)
-            markwon.setMarkdown(textView, debouncedText)
+            if (scrollView.tag != debouncedText) {
+                scrollView.tag = debouncedText
+                markwon.setMarkdown(textView, debouncedText)
+            }
             applySearchHighlights(textView, searchText, searchMatchIndex)
 
             val jump = headingJump

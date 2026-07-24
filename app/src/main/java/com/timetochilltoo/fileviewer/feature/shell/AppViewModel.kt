@@ -24,6 +24,8 @@ import com.timetochilltoo.fileviewer.core.model.TabManager
 import com.timetochilltoo.fileviewer.core.model.ViewerDocument
 import com.timetochilltoo.fileviewer.feature.pdf.PdfPrintAdapter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -71,6 +73,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val pdfPageJump: StateFlow<Pair<String, Int>?> = _pdfPageJump.asStateFlow()
 
     private val editorSelections = mutableMapOf<String, Pair<Int, Int>>()
+    private val pdfSearchJobs = mutableMapOf<String, Job>()
+
+    override fun onCleared() {
+        tabManager.tabs.forEach { tab ->
+            (tab.document as? ViewerDocument.Pdf)?.handle?.close()
+        }
+    }
 
     val recents: StateFlow<List<RecentDocument>> = recentsStore.recents
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -99,9 +108,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun restoreSession() {
         val session = sessionStore.load()
         session.tabs.forEach { entry ->
-            repository.load(entry.uri)?.let { document ->
+            val document = withContext(Dispatchers.IO) { repository.load(entry.uri) }
+            document?.let {
                 val base = DocumentTab(
-                    document = document,
+                    document = it,
                     markdownScrollY = scrollPositions[entry.uri] ?: 0,
                 )
                 tabManager.add(base.withPdfState(entry.uri))
@@ -206,11 +216,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     ),
                 )
                 pushState()
+                pdfSearchJobs[tabId]?.cancel()
                 val handle = doc.handle ?: return
-                if (trimmed.isBlank()) return
-                viewModelScope.launch(Dispatchers.IO) {
+                if (trimmed.isBlank()) {
+                    pdfSearchJobs.remove(tabId)
+                    return
+                }
+                pdfSearchJobs[tabId] = viewModelScope.launch(Dispatchers.IO) {
+                    delay(PDF_SEARCH_DEBOUNCE_MS)
                     val results = handle.search(trimmed)
                     withContext(Dispatchers.Main) {
+                        pdfSearchJobs.remove(tabId)
                         val current = tabManager.findById(tabId) ?: return@withContext
                         if (current.searchText != query) return@withContext
                         tabManager.update(
@@ -367,22 +383,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             pushState()
             return
         }
-        val document = repository.load(uri)
-        if (document == null) {
-            android.util.Log.w("FileViewer", "openUri: repository.load returned null for $uri")
-            _statusMessage.value = "Could not open document"
-            return
+        viewModelScope.launch {
+            val document = withContext(Dispatchers.IO) { repository.load(uri) }
+            if (document == null) {
+                android.util.Log.w("FileViewer", "openUri: repository.load returned null for $uri")
+                _statusMessage.value = "Could not open document"
+                return@launch
+            }
+            tabManager.add(
+                DocumentTab(
+                    document = document,
+                    markdownScrollY = scrollPositions[uri] ?: 0,
+                ).withPdfState(uri),
+            )
+            pushState()
+            scheduleSessionSave()
+            _statusMessage.value = null
+            viewModelScope.launch { recentsStore.add(uri, document.displayName) }
         }
-        tabManager.add(
-            DocumentTab(
-                document = document,
-                markdownScrollY = scrollPositions[uri] ?: 0,
-            ).withPdfState(uri),
-        )
-        pushState()
-        scheduleSessionSave()
-        _statusMessage.value = null
-        viewModelScope.launch { recentsStore.add(uri, document.displayName) }
     }
 
     fun reopenRecent(recent: RecentDocument) = openUri(recent.uri)
@@ -493,5 +511,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         manager.print(pdf.displayName, adapter, PrintAttributes.Builder().build())
         _statusMessage.value = "Printing…"
         return true
+    }
+
+    private companion object {
+        const val PDF_SEARCH_DEBOUNCE_MS = 250L
     }
 }

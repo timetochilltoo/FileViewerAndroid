@@ -83,7 +83,12 @@ class DocumentRepository(private val context: Context) {
     private fun loadPdf(uriString: String, uri: Uri, name: String): ViewerDocument? =
         runCatching {
             val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return null
-            val document = pdfiumCore.newDocument(pfd)
+            val document = try {
+                pdfiumCore.newDocument(pfd)
+            } catch (e: Throwable) {
+                runCatching { pfd.close() }
+                throw e
+            }
             ViewerDocument.Pdf(
                 uri = uriString,
                 displayName = name,
