@@ -192,6 +192,7 @@ Scoped storage (API 30+) blocks raw-path reads via `file://` even with correct p
 
 - **Recycled-bitmap crash (PDF opened → instant quit).** `PdfPageView` called `bitmap?.recycle()` right before swapping in a newly rendered bitmap; the frame still being drawn referenced the old bitmap → `RuntimeException: Canvas: trying to use a recycled bitmap`. It fired on every open because scale starts at a placeholder (1.0) then snaps to real fit-width, forcing an immediate re-render. Fix: never eagerly recycle bitmaps that Compose may still be drawing — let GC reclaim them (page bitmaps are only held while the page is composed in the LazyColumn). Same fix applied to drawer thumbnails.
 - **Release vs debug on the same device/emulator** have different signatures: `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Uninstall first (`adb uninstall com.timetochilltoo.fileviewer`) before switching builds. Also `run-as` doesn't work on the release APK (not debuggable).
+- **Zoom UX:** pinch zoom is a custom `awaitEachGesture` handler that ignores single-finger gestures (so LazyColumn scroll still works) and commits `onScaleChange` only when the pinch ends (avoids per-frame ViewModel churn + bitmap re-renders). Pages wider than the viewport (scale > fit-width) are wrapped in a `horizontalScroll` Row so single-finger horizontal drag pans the page; vertical drag still scrolls pages. Pinch does NOT zoom around the centroid and double-tap does NOT center on the tapped point — acceptable for personal use, revisit if annoying.
 
 ## 8. Status & what's next
 

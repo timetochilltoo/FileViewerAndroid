@@ -1,8 +1,11 @@
 package com.timetochilltoo.fileviewer.feature.pdf
 
 import android.annotation.SuppressLint
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -37,6 +41,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -139,15 +144,31 @@ fun PdfWorkspace(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(Unit) {
-                        detectTransformGestures { _, _, zoom, _ ->
-                            if (zoom != 1f) {
-                                scale = (scale * zoom).coerceIn(0.1f, fitWidthScale * 5f)
-                                onScaleChange(scale)
+                    .pointerInput(fitWidthScale) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            var isPinch = false
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val pressed = event.changes.count { it.pressed }
+                                if (pressed >= 2) { isPinch = true; break }
+                                if (pressed == 0) break
+                                if (event.changes.any { it.pressed && it.positionChanged() }) break
                             }
+                            if (!isPinch) return@awaitEachGesture
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val zoom = event.calculateZoom()
+                                if (zoom != 1f) {
+                                    scale = (scale * zoom).coerceIn(0.1f, fitWidthScale * 5f)
+                                }
+                                event.changes.forEach { if (it.positionChanged()) it.consume() }
+                                if (event.changes.count { it.pressed } < 2) break
+                            }
+                            onScaleChange(scale)
                         }
                     }
-                    .pointerInput(Unit) {
+                    .pointerInput(fitWidthScale) {
                         detectTapGestures(
                             onDoubleTap = {
                                 val target = if (scale > fitWidthScale * 1.2f) {
@@ -181,13 +202,23 @@ fun PdfWorkspace(
                         } else {
                             null
                         }
-                        PdfPageView(
-                            handle = handle,
-                            pageIndex = pageIndex,
-                            scale = scale,
-                            searchResults = tab.pdfSearchResults.filter { it.pageIndex == pageIndex },
-                            currentMatch = if (currentMatch?.pageIndex == pageIndex) currentMatch else null,
-                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(
+                                    state = rememberScrollState(),
+                                    enabled = scale > fitWidthScale,
+                                ),
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            PdfPageView(
+                                handle = handle,
+                                pageIndex = pageIndex,
+                                scale = scale,
+                                searchResults = tab.pdfSearchResults.filter { it.pageIndex == pageIndex },
+                                currentMatch = if (currentMatch?.pageIndex == pageIndex) currentMatch else null,
+                            )
+                        }
                     }
                 }
             }
